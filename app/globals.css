@@ -1,26 +1,210 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   HackTVM'26 — Access Point
+   Global styles: dark theme, scroll-snap, film grain, reduced motion
+   ========================================================================== */
+
+/* ---------- Color Tokens ---------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-purple: #4B2E6F;
+  --color-blue: #5C6FC7;
+  --color-cream: #E9E4C9;
+  --color-black: #000000;
+  --color-white: #ffffff;
+  --color-gray-dim: #444444;
+  --color-gray-mid: #888888;
+  --color-gray-light: #cccccc;
+
+  /* Grain overlay opacity */
+  --grain-opacity: 0.05;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--color-black);
+  --color-foreground: var(--color-white);
+  --color-purple: var(--color-purple);
+  --color-blue: var(--color-blue);
+  --color-cream: var(--color-cream);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ---------- Base ---------- */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-black);
+  color: var(--color-white);
+  font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+}
+
+/* ---------- Scroll-Snap Container ---------- */
+.snap-container {
+  height: 100vh;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  overscroll-behavior-y: none;
+
+  /* Hide scrollbar across all browsers */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.snap-container::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* ---------- Snap Sections ---------- */
+.snap-section {
+  min-height: 100vh;
+  height: 100vh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  position: relative;
+}
+
+/* Sections below the key section can be auto-height */
+.snap-section-auto {
+  min-height: 100vh;
+  scroll-snap-align: start;
+  position: relative;
+}
+
+/* ---------- Film Grain Overlay ----------
+   SVG feTurbulence as a CSS data URI — GPU-cached texture, no network request.
+   Applied as a pseudo-element to avoid breaking position:fixed children.
+   Oversized inset (-20%) provides headroom for the jitter animation.
+   -------------------------------------------------------------------------- */
+body::after {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 220px 220px;
+  animation: grain-jitter 0.7s steps(6) infinite;
+}
+
+@keyframes grain-jitter {
+  0%  { translate: 0 0; }
+  16% { translate: -4% -6%; }
+  32% { translate: 5% -3%; }
+  48% { translate: -3% 5%; }
+  64% { translate: 4% 4%; }
+  80% { translate: -5% 2%; }
+  100% { translate: 0 0; }
+}
+
+/* ---------- Focus Styles ----------
+   High-visibility focus ring for dark theme.
+   -------------------------------------------------------------------------- */
+*:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* ---------- Reduced Motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  /* Disable grain jitter animation */
+  body::after {
+    animation: none;
+    inset: 0; /* No need for oversized layer without jitter */
+  }
+
+  /* Relax scroll-snap so users can scroll freely */
+  .snap-container {
+    scroll-snap-type: y proximity;
+  }
+
+  /* Disable snap-stop so sections don't block fast scrolling */
+  .snap-section {
+    scroll-snap-stop: normal;
+  }
+
+  /* Instant opacity transitions for all animated children */
+  * {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ---------- Flicker Animation ----------
+   Used by LoadingScreen for "everyone deserves a way" reveal.
+   Words flicker together like a neon sign warming up.
+   Delay is set via inline style on the component (1.5 s default).
+   -------------------------------------------------------------------------- */
+@keyframes flicker-in {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  15%  { opacity: 0.2; }
+  30%  { opacity: 0.9; }
+  35%  { opacity: 0.4; }
+  50%  { opacity: 1; }
+  55%  { opacity: 0.7; }
+  70%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+.flicker-word {
+  opacity: 0;
+  animation: flicker-in 0.4s ease-out forwards;
+}
+
+/* Under reduced motion: instant appear, no flicker */
+@media (prefers-reduced-motion: reduce) {
+  .flicker-word {
+    animation: none;
+    opacity: 1;
+  }
+  .flicker-word[aria-hidden="true"] {
+    opacity: 0;
+  }
+}
+
+/* ---------- Glow Text Utility ---------- */
+.text-glow {
+  text-shadow:
+    0 0 8px rgba(233, 228, 201, 0.3),
+    0 0 20px rgba(92, 111, 199, 0.2),
+    0 0 40px rgba(75, 46, 111, 0.15);
+}
+
+.text-glow-strong {
+  text-shadow:
+    0 0 10px rgba(233, 228, 201, 0.5),
+    0 0 25px rgba(92, 111, 199, 0.35),
+    0 0 50px rgba(75, 46, 111, 0.25);
+}
+
+/* ---------- Blob Glow ---------- */
+.blob-glow {
+  filter: drop-shadow(0 0 15px rgba(92, 111, 199, 0.4))
+          drop-shadow(0 0 30px rgba(75, 46, 111, 0.3));
+}
+
+/* ---------- Modal Backdrop ---------- */
+.modal-backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ---------- Screen Reader Only ---------- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
 }
