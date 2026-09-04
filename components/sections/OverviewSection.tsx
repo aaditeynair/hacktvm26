@@ -13,7 +13,7 @@ export function OverviewSection() {
             <p className="py-1 font-mono uppercase tracking-wide text-sm">Everyone deserves a way in</p>
           </div>
           <p className="text-gray-mid leading-7">
-            Organized by The School of the Good Shepherd's HackTVM, HackTVM'26 is Trivandrum’s premier inter-school hackathon. It gives student innovators a direct inroad to the tech industry by challenging them to build working technology that solves real-world challenges.
+            Organized by The School of the Good Shepherd's HackTVM, HackTVM'26 is the Second Edition of Trivandrum's first and only inter-school hackathon. It gives student innovators a direct inroad to the tech industry by challenging them to build working technology that solves real-world challenges.
           </p>
         </div>
 
