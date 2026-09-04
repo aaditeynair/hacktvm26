@@ -3,9 +3,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 
-/* ========================================================================
-   1. Self-Contained 2D Simplex Noise (Zero external dependencies)
-   ======================================================================== */
 class SimplexNoise {
   private perm: number[] = [];
   private grad3 = [
@@ -68,9 +65,6 @@ class SimplexNoise {
   }
 }
 
-/* ========================================================================
-   2. Smooth Bezier Path Generator (Midpoint Quadratic Curve)
-   ======================================================================== */
 function buildSmoothPath(points: { x: number; y: number }[]): string {
   const n = points.length;
   if (n < 3) return "";
@@ -94,9 +88,6 @@ function buildSmoothPath(points: { x: number; y: number }[]): string {
   return d + " Z";
 }
 
-/* ========================================================================
-   3. Small color-math helpers (no external deps)
-   ======================================================================== */
 type RGB = [number, number, number];
 
 function lerpRGB(a: RGB, b: RGB, t: number): RGB {
@@ -112,29 +103,18 @@ function rgbToCss([r, g, b]: RGB): string {
   return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
 }
 
-/* ========================================================================
-   4. Shared geometry + color constants
-   ======================================================================== */
 const NUM_POINTS = 16;
 const CANVAS_CENTER = 100;
-const BASE_RADIUS = 72; // fluid blob's resting size (0-200 viewBox units)
+const BASE_RADIUS = 72;
 
-// How much smaller the resolved key is than the fluid blob's base size.
-// Tune this directly — lower = smaller final key.
 const KEY_SHRINK_FACTOR = 0.42;
 
-// A rough isometric-diamond fallback, used only until the real key.svg
-// silhouette finishes loading (or if it fails to load at all).
 const FALLBACK_KEYCAP_RADII = [
   82, 76, 72, 84, 90, 84, 72, 76, 82, 68, 64, 60, 58, 60, 64, 68,
 ];
 
-// The "canonical" max radius our normalized real-silhouette radii are
-// scaled to, so it's comparable in magnitude to FALLBACK_KEYCAP_RADII.
 const TARGET_MAX_RADIUS = 90;
 
-// Two-stage fluidity curve: stays wobbly through phase 4, only collapses
-// into "rigid key" right before phase 5 takes over.
 const FLUID_HOLD_PROGRESS = 0.78; // fluidity barely tapers before this
 const KEY_RIGID_PROGRESS = 0.94; // fully solid / tilt-active by this point
 
@@ -147,13 +127,8 @@ function computeFluidity(p: number): number {
   return 0.8 * (1 - eased);
 }
 
-// How fast the visual progress "catches up" to real scroll progress.
-// Lower = smoother/laggier, higher = snappier/more literal.
 const PROGRESS_LERP = 0.08;
 
-// Mesh-gradient palette (vivid, pre-morph) and the near-black it resolves
-// toward as the blob approaches becoming the key. Matte-black keycap, not
-// pure #000, so it still reads as material rather than a void.
 const MESH_PALETTE: RGB[] = [
   [99, 102, 241],   // indigo
   [168, 85, 247],   // violet
@@ -161,9 +136,6 @@ const MESH_PALETTE: RGB[] = [
 ];
 const NEAR_BLACK: RGB = [12, 11, 15];
 
-// The soft ambient underglow (like the drop-shadow in the reference art)
-// stays a fixed vivid purple/magenta regardless of morph progress — this
-// is intentionally never the same layer as the sharp core shape.
 const AMBIENT_GLOW_COLOR: RGB = [172, 62, 214];
 
 interface KeyImagePlacement {
@@ -175,33 +147,19 @@ interface KeyImagePlacement {
 }
 
 interface BlobMorphProps {
-  /**
-   * Scroll progress from 0.0 (Section 1: fully fluid blob)
-   * to 1.0 (Section 5: fully resolved keycap).
-   */
   progress?: number;
 }
 
-/* ========================================================================
-   5. BlobMorph Main Component
-   ======================================================================== */
 export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
-  // Geometry refs — three <path>/<clipPath> elements share the exact same
-  // 'd' each frame: the sharp core, the blurred ambient glow, and the clip
-  // that keeps the mesh-gradient patches confined to the blob's silhouette.
   const corePathRef = useRef<SVGPathElement>(null);
   const glowPathRef = useRef<SVGPathElement>(null);
   const clipPathRef = useRef<SVGPathElement>(null);
 
-  // Mesh-gradient patch refs — each patch is a drifting radial gradient
-  // circle; only its center coordinates and center-stop color change.
   const meshCircleRefs = useRef<(SVGCircleElement | null)[]>([]);
   const meshStopRefs = useRef<(SVGStopElement | null)[]>([]);
 
-  // Real silhouette data, loaded async from /key.svg. Starts as the
-  // hand-authored fallback so nothing breaks before the load completes.
   const targetRadiiRef = useRef<Float32Array>(Float32Array.from(FALLBACK_KEYCAP_RADII));
   const keyImageRef = useRef<KeyImagePlacement | null>(null);
   const [keyImageReady, setKeyImageReady] = useState(false);
@@ -212,8 +170,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     progressRef.current = progress;
   }, [progress]);
 
-  // Lerped progress used for all geometry, so fast scroll-snap jumps
-  // don't cause the blob to pop instead of settle.
   const smoothedProgressRef = useRef(0);
 
   // Section 5 3D Tilt Values
@@ -232,12 +188,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     active: false,
   });
 
-  /* ----------------------------------------------------------------------
-     5a. Load the real key.svg silhouette once on mount.
-     Rasterizes it to an offscreen canvas, finds its bounding box +
-     centroid, ray-marches NUM_POINTS angles to get real target radii,
-     and computes exact placement for an <image> overlay of the artwork.
-  ---------------------------------------------------------------------- */
   useEffect(() => {
     let cancelled = false;
     const RASTER = 400;
@@ -358,14 +308,9 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     };
   }, []);
 
-  /* ----------------------------------------------------------------------
-     5b. Main physics + render loop
-  ---------------------------------------------------------------------- */
   useEffect(() => {
     const shapeNoise = new SimplexNoise();
-    const meshNoise = new SimplexNoise(); // separate instance so patch
-    // drift doesn't correlate with
-    // the blob's own deformation
+    const meshNoise = new SimplexNoise();
 
     const IDLE_AMPLITUDE_MAX = 9;
     const IDLE_SPEED = 0.00045;
@@ -377,8 +322,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     const rOffsets = new Float32Array(NUM_POINTS);
     const rVelocities = new Float32Array(NUM_POINTS);
 
-    // Per-patch drift phase offsets, so the three mesh-gradient patches
-    // move independently rather than in lockstep.
     const MESH_PATCH_COUNT = 3;
     const meshPhaseOffsets = Array.from({ length: MESH_PATCH_COUNT }, (_, i) => i * 5.2);
 
@@ -513,9 +456,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       if (glowPathRef.current) glowPathRef.current.setAttribute("d", dString);
       if (clipPathRef.current) clipPathRef.current.setAttribute("d", dString);
 
-      // --- Mesh-gradient patches: drift + color resolve toward black ---
-      // colorT reaches 1 right as the key becomes rigid, so the blob's
-      // *material* finishes settling to matte black in step with its shape.
       const colorT = Math.min(1, currentProgress / KEY_RIGID_PROGRESS);
 
       for (let p = 0; p < MESH_PATCH_COUNT; p++) {
@@ -536,15 +476,10 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         }
       }
 
-      // --- Core fill: dark backdrop behind the mesh patches, also
-      // resolving toward the same near-black as the mesh patches. ---
       if (corePathRef.current) {
         const backdrop = lerpRGB([24, 16, 30], NEAR_BLACK, colorT);
         corePathRef.current.style.fill = rgbToCss(backdrop);
 
-        // Crossfade the sharp core out as the real key artwork fades in,
-        // so nothing sharp-edged is left peeking out past the key's
-        // actual silhouette once it's fully resolved.
         const detailOpacity = Math.min(
           1,
           Math.max(0, (currentProgress - FLUID_HOLD_PROGRESS) / (KEY_RIGID_PROGRESS - FLUID_HOLD_PROGRESS))
@@ -552,8 +487,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         corePathRef.current.style.opacity = String(0.94 - 0.8 * detailOpacity);
       }
 
-      // --- Ambient glow: always the same vivid purple/magenta, blurred,
-      // acting as a permanent soft underglow rather than a visible shape.
       if (glowPathRef.current) {
         glowPathRef.current.style.fill = rgbToCss(AMBIENT_GLOW_COLOR);
         glowPathRef.current.style.opacity = String(0.32 + 0.18 * colorT);
@@ -613,19 +546,10 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           ))}
         </defs>
 
-        {/* LAYER 0: Soft ambient underglow — blurred, fixed vivid color,
-            always present regardless of morph stage (the drop-shadow
-            look from the reference art). Never sharp-edged, so it never
-            reads as "the blob" poking out from behind the key. */}
         <path ref={glowPathRef} filter="url(#blob-ambient-blur)" />
 
-        {/* LAYER 1: Sharp core — dark backdrop, fades out as the real
-            key artwork takes over. */}
         <path ref={corePathRef} />
 
-        {/* LAYER 2: Mesh-gradient patches, clipped to the exact blob
-            silhouette, drifting independently for an organic multi-color
-            blend instead of a flat two-stop gradient. */}
         <g clipPath="url(#blob-mesh-clip)" style={{ mixBlendMode: "screen" }}>
           {Array.from({ length: 3 }).map((_, i) => (
             <circle
@@ -641,8 +565,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           ))}
         </g>
 
-        {/* LAYER 3: Real key.svg artwork, faded in and precisely placed
-            based on the silhouette computed on load. */}
         {keyImageReady && keyImageRef.current && (
           <image
             href={keyImageRef.current.href}
