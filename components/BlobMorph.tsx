@@ -88,21 +88,6 @@ function buildSmoothPath(points: { x: number; y: number }[]): string {
   return d + " Z";
 }
 
-type RGB = [number, number, number];
-
-function lerpRGB(a: RGB, b: RGB, t: number): RGB {
-  const clampT = Math.min(1, Math.max(0, t));
-  return [
-    a[0] + (b[0] - a[0]) * clampT,
-    a[1] + (b[1] - a[1]) * clampT,
-    a[2] + (b[2] - a[2]) * clampT,
-  ];
-}
-
-function rgbToCss([r, g, b]: RGB): string {
-  return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
-}
-
 const NUM_POINTS = 16;
 const CANVAS_CENTER = 100;
 const BASE_RADIUS = 72;
@@ -115,28 +100,22 @@ const FALLBACK_KEYCAP_RADII = [
 
 const TARGET_MAX_RADIUS = 90;
 
-const FLUID_HOLD_PROGRESS = 0.78; // fluidity barely tapers before this
-const KEY_RIGID_PROGRESS = 0.94; // fully solid / tilt-active by this point
+// Shifted threshold: Section 4 is at 0.75 progress, so transition starts at 0.80 (Section 5)
+const FLUID_HOLD_PROGRESS = 0.80;
+const KEY_RIGID_PROGRESS = 0.96;
 
 function computeFluidity(p: number): number {
   if (p <= FLUID_HOLD_PROGRESS) {
     return 1 - 0.2 * (p / FLUID_HOLD_PROGRESS);
   }
   const t = Math.min(1, (p - FLUID_HOLD_PROGRESS) / (KEY_RIGID_PROGRESS - FLUID_HOLD_PROGRESS));
-  const eased = t * t * (3 - 2 * t); // smoothstep, no snap
+  const eased = t * t * (3 - 2 * t);
   return 0.8 * (1 - eased);
 }
 
 const PROGRESS_LERP = 0.08;
 
-const MESH_PALETTE: RGB[] = [
-  [99, 102, 241],   // indigo
-  [168, 85, 247],   // violet
-  [236, 72, 153],   // pink/magenta
-];
-const NEAR_BLACK: RGB = [12, 11, 15];
-
-const AMBIENT_GLOW_COLOR: RGB = [172, 62, 214];
+const SPECULAR_PALETTE = ["#ffffff", "#cbd5e1", "#e2e8f0", "#ffffff"];
 
 interface KeyImagePlacement {
   href: string;
@@ -154,17 +133,18 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const corePathRef = useRef<SVGPathElement>(null);
-  const glowPathRef = useRef<SVGPathElement>(null);
+  const haloPathRef = useRef<SVGPathElement>(null);
   const clipPathRef = useRef<SVGPathElement>(null);
+  const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
+  const logoImageRef = useRef<SVGImageElement>(null);
 
+  const meshGroupRef = useRef<SVGGElement>(null);
   const meshCircleRefs = useRef<(SVGCircleElement | null)[]>([]);
-  const meshStopRefs = useRef<(SVGStopElement | null)[]>([]);
 
   const targetRadiiRef = useRef<Float32Array>(Float32Array.from(FALLBACK_KEYCAP_RADII));
   const keyImageRef = useRef<KeyImagePlacement | null>(null);
   const [keyImageReady, setKeyImageReady] = useState(false);
 
-  // Synchronize incoming progress prop with animation frame ref
   const progressRef = useRef(progress);
   useEffect(() => {
     progressRef.current = progress;
@@ -172,7 +152,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
   const smoothedProgressRef = useRef(0);
 
-  // Section 5 3D Tilt Values
   const isKeyActive = progress >= KEY_RIGID_PROGRESS;
   const tiltCursorX = useMotionValue(0);
   const tiltCursorY = useMotionValue(0);
@@ -253,7 +232,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             }
           }
           if (!found || maxX <= minX || maxY <= minY) {
-            console.warn("BlobMorph: key.svg silhouette detection failed, using fallback radii");
             return;
           }
 
@@ -292,13 +270,9 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           setKeyImageReady(true);
         };
 
-        img.onerror = () => {
-          console.warn("BlobMorph: failed to load /key.svg, using fallback radii");
-        };
-
         img.src = url;
       } catch (err) {
-        console.warn("BlobMorph: error loading key.svg silhouette, using fallback radii", err);
+        console.warn("BlobMorph: error loading key.svg silhouette", err);
       }
     }
 
@@ -322,8 +296,8 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     const rOffsets = new Float32Array(NUM_POINTS);
     const rVelocities = new Float32Array(NUM_POINTS);
 
-    const MESH_PATCH_COUNT = 3;
-    const meshPhaseOffsets = Array.from({ length: MESH_PATCH_COUNT }, (_, i) => i * 5.2);
+    const MESH_PATCH_COUNT = SPECULAR_PALETTE.length;
+    const meshAngles = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];
 
     const handleMouseMove = (e: MouseEvent) => {
       cursorRef.current = {
@@ -453,43 +427,61 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
       const dString = buildSmoothPath(points);
       if (corePathRef.current) corePathRef.current.setAttribute("d", dString);
-      if (glowPathRef.current) glowPathRef.current.setAttribute("d", dString);
+      if (haloPathRef.current) haloPathRef.current.setAttribute("d", dString);
       if (clipPathRef.current) clipPathRef.current.setAttribute("d", dString);
 
-      const colorT = Math.min(1, currentProgress / KEY_RIGID_PROGRESS);
+      // BLOB DISSOLVE & LOGO FADE: Dissolves between progress 0.80 and 0.96 (Section 5)
+      const blobFadeFactor = Math.min(
+        1,
+        Math.max(0, (currentProgress - FLUID_HOLD_PROGRESS) / (KEY_RIGID_PROGRESS - FLUID_HOLD_PROGRESS))
+      );
+      const blobOpacity = Math.max(0, 1 - blobFadeFactor);
+
+      // 1. NEUTRAL BACKLIGHT HALO
+      if (glowBlurRef.current) {
+        const currentBlur = 12 * blobOpacity;
+        glowBlurRef.current.setAttribute("stdDeviation", currentBlur.toFixed(2));
+      }
+
+      if (haloPathRef.current) {
+        haloPathRef.current.style.opacity = String(0.12 * blobOpacity);
+      }
+
+      // 2. CORE BLOB FADE OUT
+      if (corePathRef.current) {
+        corePathRef.current.style.fill = "url(#obsidian-body-grad)";
+        corePathRef.current.style.stroke = "url(#obsidian-rim-grad)";
+        corePathRef.current.style.opacity = String(blobOpacity);
+
+        const strokeW = 0.8 + 0.4 * (1 - blobOpacity);
+        corePathRef.current.style.strokeWidth = strokeW.toFixed(2);
+      }
+
+      // 3. SPECULAR GLARE DISSOLVE
+      if (meshGroupRef.current) {
+        meshGroupRef.current.style.opacity = String(0.6 * blobOpacity);
+      }
+
+      // 4. LOGO FADE IN (Exact mirror of blob dissolve)
+      if (logoImageRef.current) {
+        logoImageRef.current.style.opacity = String(blobFadeFactor);
+      }
 
       for (let p = 0; p < MESH_PATCH_COUNT; p++) {
-        const phase = meshPhaseOffsets[p];
-        const driftX = meshNoise.noise2D(time * 1.3 + phase, phase) * 34;
-        const driftY = meshNoise.noise2D(phase, time * 1.3 + phase) * 34;
+        const baseA = meshAngles[p] + time * 1.2;
+        const nX = meshNoise.noise2D(time * 1.5 + p, p * 10);
+        const nY = meshNoise.noise2D(p * 10, time * 1.5 + p);
+
+        const orbitRadius = 18 + nX * 8;
+        const driftX = Math.cos(baseA) * orbitRadius + nX * 10;
+        const driftY = Math.sin(baseA) * orbitRadius + nY * 10;
 
         const circle = meshCircleRefs.current[p];
         if (circle) {
           circle.setAttribute("cx", String(CANVAS_CENTER + driftX));
           circle.setAttribute("cy", String(CANVAS_CENTER + driftY));
+          circle.setAttribute("r", "55");
         }
-
-        const stop = meshStopRefs.current[p];
-        if (stop) {
-          const patchColor = lerpRGB(MESH_PALETTE[p % MESH_PALETTE.length], NEAR_BLACK, colorT);
-          stop.setAttribute("stop-color", rgbToCss(patchColor));
-        }
-      }
-
-      if (corePathRef.current) {
-        const backdrop = lerpRGB([24, 16, 30], NEAR_BLACK, colorT);
-        corePathRef.current.style.fill = rgbToCss(backdrop);
-
-        const detailOpacity = Math.min(
-          1,
-          Math.max(0, (currentProgress - FLUID_HOLD_PROGRESS) / (KEY_RIGID_PROGRESS - FLUID_HOLD_PROGRESS))
-        );
-        corePathRef.current.style.opacity = String(0.94 - 0.8 * detailOpacity);
-      }
-
-      if (glowPathRef.current) {
-        glowPathRef.current.style.fill = rgbToCss(AMBIENT_GLOW_COLOR);
-        glowPathRef.current.style.opacity = String(0.32 + 0.18 * colorT);
       }
 
       rafId = requestAnimationFrame(tick);
@@ -503,11 +495,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       document.removeEventListener("mouseleave", handleMouseLeave);
     };
   }, [tiltCursorX, tiltCursorY]);
-
-  const detailOpacity = Math.min(
-    1,
-    Math.max(0, (progress - FLUID_HOLD_PROGRESS) / (KEY_RIGID_PROGRESS - FLUID_HOLD_PROGRESS))
-  );
 
   return (
     <motion.div className="fixed inset-0 z-10 flex items-center justify-center pointer-events-none">
@@ -527,31 +514,57 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             <path ref={clipPathRef} />
           </clipPath>
 
-          <filter id="blob-ambient-blur" x="-80%" y="-80%" width="260%" height="260%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="16" />
+          {/* Ambient neutral halo */}
+          <filter id="blob-ambient-halo" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="12" />
           </filter>
 
-          {Array.from({ length: 3 }).map((_, i) => (
-            <radialGradient key={i} id={`mesh-patch-${i}`} cx="50%" cy="50%" r="50%">
-              <stop
-                ref={(el) => {
-                  meshStopRefs.current[i] = el;
-                }}
-                offset="0%"
-                stopColor="#6366f1"
-                stopOpacity={0.85}
-              />
-              <stop offset="100%" stopColor="#000000" stopOpacity={0} />
+          {/* Soft White/Silver Glow for the Final Logo */}
+          <filter id="logo-glow-filter" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="glowBlur" />
+            <feComponentTransfer in="glowBlur" result="dimmedGlow">
+              <feFuncA type="linear" slope="0.75" />
+            </feComponentTransfer>
+            <feMerge>
+              <feMergeNode in="dimmedGlow" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          {/* Deep pitch black body gradient */}
+          <linearGradient id="obsidian-body-grad" x1="20%" y1="15%" x2="80%" y2="85%">
+            <stop offset="0%" stopColor="#101014" />
+            <stop offset="35%" stopColor="#040405" />
+            <stop offset="100%" stopColor="#000000" />
+          </linearGradient>
+
+          {/* Crisp, subtle white rim stroke */}
+          <linearGradient id="obsidian-rim-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity={0.65} />
+            <stop offset="30%" stopColor="#ffffff" stopOpacity={0.15} />
+            <stop offset="70%" stopColor="#ffffff" stopOpacity={0.02} />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity={0.35} />
+          </linearGradient>
+
+          {/* Tightened, high-decay specular highlights */}
+          {SPECULAR_PALETTE.map((colorHex, i) => (
+            <radialGradient key={i} id={`specular-patch-${i}`} cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor={colorHex} stopOpacity={i === 0 ? 0.12 : 0.06} />
+              <stop offset="20%" stopColor={colorHex} stopOpacity={i === 0 ? 0.03 : 0.01} />
+              <stop offset="100%" stopColor={colorHex} stopOpacity={0} />
             </radialGradient>
           ))}
         </defs>
 
-        <path ref={glowPathRef} filter="url(#blob-ambient-blur)" />
+        {/* Soft Backlight separation */}
+        <path ref={haloPathRef} fill="#ffffff" filter="url(#blob-ambient-halo)" />
 
+        {/* Main Blob: Pitch Black body with subtle edge outline */}
         <path ref={corePathRef} />
 
-        <g clipPath="url(#blob-mesh-clip)" style={{ mixBlendMode: "screen" }}>
-          {Array.from({ length: 3 }).map((_, i) => (
+        {/* Specular Liquid Sheen Overlay */}
+        <g ref={meshGroupRef} clipPath="url(#blob-mesh-clip)" style={{ mixBlendMode: "screen" }}>
+          {SPECULAR_PALETTE.map((_, i) => (
             <circle
               key={i}
               ref={(el) => {
@@ -559,20 +572,23 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
               }}
               cx={CANVAS_CENTER}
               cy={CANVAS_CENTER}
-              r={70}
-              fill={`url(#mesh-patch-${i})`}
+              r={55}
+              fill={`url(#specular-patch-${i})`}
             />
           ))}
         </g>
 
+        {/* Final Illuminated Logo: Opacity controlled directly in tick() */}
         {keyImageReady && keyImageRef.current && (
           <image
+            ref={logoImageRef}
             href={keyImageRef.current.href}
             x={keyImageRef.current.x}
             y={keyImageRef.current.y}
             width={keyImageRef.current.width}
             height={keyImageRef.current.height}
-            style={{ opacity: detailOpacity, transition: "opacity 0.15s linear" }}
+            filter="url(#logo-glow-filter)"
+            style={{ opacity: 0 }}
             preserveAspectRatio="xMidYMid meet"
           />
         )}

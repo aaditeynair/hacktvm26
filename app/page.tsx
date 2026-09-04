@@ -1,7 +1,3 @@
-/**
- * HackTVM'26 — Access Point
- * Main page. Scroll-snap sections with the morphing blob overlay.
- */
 "use client";
 import { useRef, useState } from "react";
 import { useScroll, useMotionValueEvent } from "framer-motion";
