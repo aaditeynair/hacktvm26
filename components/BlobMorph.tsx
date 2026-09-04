@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 
 /* ========================================================================
@@ -95,30 +95,55 @@ function buildSmoothPath(points: { x: number; y: number }[]): string {
 }
 
 /* ========================================================================
-   3. Target Keycap Silhouette Radii (16-point isometric diamond)
+   3. Shared geometry constants
    ======================================================================== */
-const KEYCAP_TARGET_RADII = [
-  82, // 0°   (Rightmost corner)
-  76, // 22.5°
-  72, // 45°  (Bottom-right edge)
-  84, // 67.5°
-  90, // 90°  (Bottom-most corner)
-  84, // 112.5°
-  72, // 135° (Bottom-left edge)
-  76, // 157.5°
-  82, // 180° (Leftmost corner)
-  68, // 202.5°
-  64, // 225° (Top-left edge)
-  60, // 247.5°
-  58, // 270° (Top-most edge)
-  60, // 292.5°
-  64, // 315° (Top-right edge)
-  68  // 337.5°
+const NUM_POINTS = 16;
+const CANVAS_CENTER = 100;
+const BASE_RADIUS = 72; // fluid blob's resting size (0-200 viewBox units)
+
+// How much smaller the resolved key is than the fluid blob's base size.
+// Tune this directly — lower = smaller final key.
+const KEY_SHRINK_FACTOR = 0.42;
+
+// A rough isometric-diamond fallback, used only until the real key.svg
+// silhouette finishes loading (or if it fails to load at all).
+const FALLBACK_KEYCAP_RADII = [
+  82, 76, 72, 84, 90, 84, 72, 76, 82, 68, 64, 60, 58, 60, 64, 68,
 ];
+
+// The "canonical" max radius our normalized real-silhouette radii are
+// scaled to, so it's comparable in magnitude to FALLBACK_KEYCAP_RADII.
+const TARGET_MAX_RADIUS = 90;
+
+// Two-stage fluidity curve: stays wobbly through phase 4, only collapses
+// into "rigid key" right before phase 5 takes over.
+const FLUID_HOLD_PROGRESS = 0.78; // fluidity barely tapers before this
+const KEY_RIGID_PROGRESS = 0.94; // fully solid / tilt-active by this point
+
+function computeFluidity(p: number): number {
+  if (p <= FLUID_HOLD_PROGRESS) {
+    return 1 - 0.2 * (p / FLUID_HOLD_PROGRESS);
+  }
+  const t = Math.min(1, (p - FLUID_HOLD_PROGRESS) / (KEY_RIGID_PROGRESS - FLUID_HOLD_PROGRESS));
+  const eased = t * t * (3 - 2 * t); // smoothstep, no snap
+  return 0.8 * (1 - eased);
+}
+
+// How fast the visual progress "catches up" to real scroll progress.
+// Lower = smoother/laggier, higher = snappier/more literal.
+const PROGRESS_LERP = 0.08;
+
+interface KeyImagePlacement {
+  href: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 interface BlobMorphProps {
   /**
-   * Scroll progress from 0.0 (Section 1: fully fluid blob) 
+   * Scroll progress from 0.0 (Section 1: fully fluid blob)
    * to 1.0 (Section 5: fully resolved keycap).
    */
   progress?: number;
@@ -130,7 +155,12 @@ interface BlobMorphProps {
 export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const pathRef = useRef<SVGPathElement>(null);
-  const detailOverlayRef = useRef<SVGGElement>(null);
+
+  // Real silhouette data, loaded async from /key.svg. Starts as the
+  // hand-authored fallback so nothing breaks before the load completes.
+  const targetRadiiRef = useRef<Float32Array>(Float32Array.from(FALLBACK_KEYCAP_RADII));
+  const keyImageRef = useRef<KeyImagePlacement | null>(null);
+  const [keyImageReady, setKeyImageReady] = useState(false);
 
   // Synchronize incoming progress prop with animation frame ref
   const progressRef = useRef(progress);
@@ -138,8 +168,12 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     progressRef.current = progress;
   }, [progress]);
 
+  // Lerped progress used for all geometry, so fast scroll-snap jumps
+  // don't cause the blob to pop instead of settle.
+  const smoothedProgressRef = useRef(0);
+
   // Section 5 3D Tilt Values
-  const isKeyActive = progress >= 0.95;
+  const isKeyActive = progress >= KEY_RIGID_PROGRESS;
   const tiltCursorX = useMotionValue(0);
   const tiltCursorY = useMotionValue(0);
 
@@ -154,12 +188,145 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     active: false,
   });
 
+  /* ----------------------------------------------------------------------
+     4a. Load the real key.svg silhouette once on mount.
+     Rasterizes it to an offscreen canvas, finds its bounding box +
+     centroid, ray-marches NUM_POINTS angles to get real per-angle radii,
+     and computes exact placement for an <image> overlay of the artwork.
+  ---------------------------------------------------------------------- */
+  useEffect(() => {
+    let cancelled = false;
+    const RASTER = 400;
+    const MASK_ALPHA_THRESHOLD = 10;
+
+    async function loadKeySilhouette() {
+      try {
+        const res = await fetch("/key.svg");
+        const svgText = await res.text();
+        const blob = new Blob([svgText], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+
+        img.onload = () => {
+          if (cancelled) return;
+
+          const canvas = document.createElement("canvas");
+          canvas.width = RASTER;
+          canvas.height = RASTER;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+
+          const aspect = img.naturalWidth / img.naturalHeight;
+          let drawW = RASTER;
+          let drawH = RASTER;
+          if (aspect >= 1) {
+            drawH = RASTER / aspect;
+          } else {
+            drawW = RASTER * aspect;
+          }
+          const offsetX = (RASTER - drawW) / 2;
+          const offsetY = (RASTER - drawH) / 2;
+
+          ctx.clearRect(0, 0, RASTER, RASTER);
+          ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+
+          let imageData: ImageData;
+          try {
+            imageData = ctx.getImageData(0, 0, RASTER, RASTER);
+          } catch (err) {
+            // Canvas got tainted (cross-origin) — bail out to fallback.
+            console.warn("BlobMorph: could not read key.svg pixel data", err);
+            return;
+          }
+          const data = imageData.data;
+
+          const isInk = (x: number, y: number) => {
+            if (x < 0 || y < 0 || x >= RASTER || y >= RASTER) return false;
+            const idx = (Math.floor(y) * RASTER + Math.floor(x)) * 4;
+            return data[idx + 3] > MASK_ALPHA_THRESHOLD;
+          };
+
+          // Bounding box of the silhouette (coarse scan for speed).
+          let minX = RASTER, maxX = 0, minY = RASTER, maxY = 0;
+          let found = false;
+          for (let y = 0; y < RASTER; y += 2) {
+            for (let x = 0; x < RASTER; x += 2) {
+              if (isInk(x, y)) {
+                found = true;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+          if (!found || maxX <= minX || maxY <= minY) {
+            console.warn("BlobMorph: key.svg silhouette detection failed, using fallback radii");
+            return;
+          }
+
+          const centroidX = (minX + maxX) / 2;
+          const centroidY = (minY + maxY) / 2;
+          const boundingDiagonal = Math.max(maxX - minX, maxY - minY);
+
+          // Ray-march the real silhouette to get per-angle radii,
+          // using the same angle convention as the render loop below.
+          const rawRadii = new Float32Array(NUM_POINTS);
+          for (let i = 0; i < NUM_POINTS; i++) {
+            const angle = (i / NUM_POINTS) * Math.PI * 2;
+            const dx = Math.cos(angle);
+            const dy = Math.sin(angle);
+            let r = 0;
+            while (r < RASTER && isInk(centroidX + dx * r, centroidY + dy * r)) {
+              r += 1;
+            }
+            rawRadii[i] = r;
+          }
+
+          const maxRawRadius = Math.max(...Array.from(rawRadii), 1);
+          const normalizedRadii = Float32Array.from(
+            rawRadii,
+            (r) => (r / maxRawRadius) * TARGET_MAX_RADIUS
+          );
+
+          // Scale factor mapping raster pixels -> the 0-200 viewBox,
+          // so the final key ends up the same visual size as
+          // TARGET_MAX_RADIUS * KEY_SHRINK_FACTOR.
+          const scale = (2 * TARGET_MAX_RADIUS * KEY_SHRINK_FACTOR) / boundingDiagonal;
+
+          targetRadiiRef.current = normalizedRadii;
+          keyImageRef.current = {
+            href: url,
+            x: CANVAS_CENTER - centroidX * scale,
+            y: CANVAS_CENTER - centroidY * scale,
+            width: drawW * scale,
+            height: drawH * scale,
+          };
+          setKeyImageReady(true);
+        };
+
+        img.onerror = () => {
+          console.warn("BlobMorph: failed to load /key.svg, using fallback radii");
+        };
+
+        img.src = url;
+      } catch (err) {
+        console.warn("BlobMorph: error loading key.svg silhouette, using fallback radii", err);
+      }
+    }
+
+    loadKeySilhouette();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* ----------------------------------------------------------------------
+     4b. Main physics + render loop
+  ---------------------------------------------------------------------- */
   useEffect(() => {
     const noise = new SimplexNoise();
 
-    const NUM_POINTS = 16;
-    const CANVAS_CENTER = 100;
-    const BASE_RADIUS = 72; // Enlarged base geometric scale
     const IDLE_AMPLITUDE_MAX = 9;
     const IDLE_SPEED = 0.00045;
 
@@ -200,10 +367,17 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       const now = performance.now() - startTime;
       const time = now * IDLE_SPEED;
       const cursor = cursorRef.current;
-      const currentProgress = Math.min(1, Math.max(0, progressRef.current));
 
-      // As scroll progress increases, fluidity and cursor elasticity taper down
-      const fluidityFactor = Math.pow(1 - currentProgress, 1.8);
+      // Lerp visual progress toward the real (possibly jumpy) scroll
+      // progress, so snap-scroll jumps settle instead of popping.
+      const targetProgress = Math.min(1, Math.max(0, progressRef.current));
+      smoothedProgressRef.current +=
+        (targetProgress - smoothedProgressRef.current) * PROGRESS_LERP;
+      const currentProgress = smoothedProgressRef.current;
+
+      // Two-stage fluidity: holds wobble through phase 4, only
+      // collapses to rigid right before phase 5 (the key) takes over.
+      const fluidityFactor = computeFluidity(currentProgress);
       const idleAmplitude = IDLE_AMPLITUDE_MAX * fluidityFactor;
       const stretchStrength = STRETCH_STRENGTH_MAX * fluidityFactor;
 
@@ -278,15 +452,17 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
       // 4. Interpolate Target Geometry & Render SVG Path
       const points: { x: number; y: number }[] = [];
+      const targetRadii = targetRadiiRef.current;
 
       for (let i = 0; i < NUM_POINTS; i++) {
         const angle = (i / NUM_POINTS) * Math.PI * 2;
         const cosA = Math.cos(angle);
         const sinA = Math.sin(angle);
 
-        // Smoothly lerp base circle toward the isometric keycap target radii
-        const targetKeyRadius = KEYCAP_TARGET_RADII[i];
-        const baseMorphRadius = (1 - currentProgress) * BASE_RADIUS + currentProgress * targetKeyRadius;
+        // Shrink the resolved key relative to the fluid blob's base size.
+        const targetKeyRadius = targetRadii[i] * KEY_SHRINK_FACTOR;
+        const baseMorphRadius =
+          (1 - currentProgress) * BASE_RADIUS + currentProgress * targetKeyRadius;
 
         // Idle Perlin/Simplex noise modulation
         const n = noise.noise2D(cosA * 0.9, sinA * 0.9 + time);
@@ -304,12 +480,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         pathRef.current.setAttribute("d", buildSmoothPath(points));
       }
 
-      // Fade in inner top-cap bevel details & "H" logo when progress > 0.75
-      if (detailOverlayRef.current) {
-        const detailOpacity = Math.max(0, (currentProgress - 0.75) / 0.25);
-        detailOverlayRef.current.style.opacity = detailOpacity.toString();
-      }
-
       rafId = requestAnimationFrame(tick);
     };
 
@@ -321,6 +491,13 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       document.removeEventListener("mouseleave", handleMouseLeave);
     };
   }, [tiltCursorX, tiltCursorY]);
+
+  // Detail (real key artwork) fade-in — driven directly off the prop,
+  // same threshold range as the rigid/tilt cutover for consistency.
+  const detailOpacity = Math.min(
+    1,
+    Math.max(0, (progress - FLUID_HOLD_PROGRESS) / (KEY_RIGID_PROGRESS - FLUID_HOLD_PROGRESS))
+  );
 
   return (
     <motion.div className="fixed inset-0 z-10 flex items-center justify-center pointer-events-none">
@@ -359,25 +536,19 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           opacity={0.94}
         />
 
-        {/* LAYER 2: Inner Keycap Top Face Bevel & "H" Legend Overlay */}
-        <g ref={detailOverlayRef} style={{ opacity: 0, transition: "opacity 0.15s linear" }}>
-          {/* Top Keycap Face Quad Outline */}
-          <polygon
-            points="62,72 138,52 160,82 82,108"
-            fill="none"
-            stroke="rgba(255, 255, 255, 0.45)"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
+        {/* LAYER 2: Real key.svg artwork, faded in and precisely placed
+            based on the silhouette we computed on load. */}
+        {keyImageReady && keyImageRef.current && (
+          <image
+            href={keyImageRef.current.href}
+            x={keyImageRef.current.x}
+            y={keyImageRef.current.y}
+            width={keyImageRef.current.width}
+            height={keyImageRef.current.height}
+            style={{ opacity: detailOpacity, transition: "opacity 0.15s linear" }}
+            preserveAspectRatio="xMidYMid meet"
           />
-
-          {/* Isometric "H" Logo */}
-          <g transform="translate(100, 78) rotate(-16) skewX(25) scale(0.65)">
-            <path
-              d="M -15,-20 H -5 V -4 H 5 V -20 H 15 V 20 H 5 V 4 H -5 V 20 H -15 Z"
-              fill="#ffffff"
-            />
-          </g>
-        </g>
+        )}
       </motion.svg>
     </motion.div>
   );

@@ -3,7 +3,6 @@
  * Main page. Scroll-snap sections with the morphing blob overlay.
  */
 "use client";
-
 import { useRef, useState } from "react";
 import { useScroll, useMotionValueEvent } from "framer-motion";
 import { BlobMorph } from "@/components/BlobMorph";
@@ -16,7 +15,6 @@ import { KeySection } from "@/components/sections/KeySection";
 
 export default function Home() {
   useActiveSection();
-
   const containerRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState(0);
 
