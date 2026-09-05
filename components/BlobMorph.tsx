@@ -65,77 +65,72 @@ class SimplexNoise {
   }
 }
 
-function buildSmoothPath(points: { x: number; y: number }[]): string {
+/**
+ * Build a closed SVG path with adaptive smoothing.
+ *   sharpness = 0  →  full quadratic-bézier smoothing (organic blob)
+ *   sharpness = 1  →  polyline through actual points (sharp key teeth)
+ */
+function buildAdaptivePath(
+  points: { x: number; y: number }[],
+  sharpness: number,
+): string {
   const n = points.length;
   if (n < 3) return "";
 
-  const midpoints = points.map((pt, i) => {
+  // Clamp
+  const s = Math.max(0, Math.min(1, sharpness));
+
+  // Compute endpoints for each segment. At s=0 they sit at midpoints
+  // (classic smooth blob). At s=1 they sit at the actual vertices (sharp).
+  const ends = points.map((pt, i) => {
     const next = points[(i + 1) % n];
+    const mx = (pt.x + next.x) / 2;
+    const my = (pt.y + next.y) / 2;
     return {
-      x: (pt.x + next.x) / 2,
-      y: (pt.y + next.y) / 2,
+      x: mx + (next.x - mx) * s,
+      y: my + (next.y - my) * s,
     };
   });
 
-  let d = `M ${midpoints[n - 1].x.toFixed(2)},${midpoints[n - 1].y.toFixed(2)}`;
+  const lastEnd = ends[n - 1];
+  let d = `M ${lastEnd.x.toFixed(2)},${lastEnd.y.toFixed(2)}`;
 
   for (let i = 0; i < n; i++) {
     const pt = points[i];
-    const mid = midpoints[i];
-    d += ` Q ${pt.x.toFixed(2)},${pt.y.toFixed(2)} ${mid.x.toFixed(2)},${mid.y.toFixed(2)}`;
+    const end = ends[i];
+    d += ` Q ${pt.x.toFixed(2)},${pt.y.toFixed(2)} ${end.x.toFixed(2)},${end.y.toFixed(2)}`;
   }
 
   return d + " Z";
 }
 
 // --- assets -----------------------------------------------------------
-// SILHOUETTE_SRC is used ONLY to derive the outline shape (radii + placement math).
-// DETAIL_LOGO_SRC is what actually gets rendered as the reveal. If your logo art
-// has real inner detail (engraving lines, a cutout, whatever), point this there —
-// if it's the same flat silhouette, the "reveal" will just be a hardening, no
-// separate detail beat, which is honest but not what you described wanting.
 const SILHOUETTE_SRC = "/silhouette.svg";
-const DETAIL_LOGO_SRC = "/key.svg"; // <-- swap this to your detailed asset
+const DETAIL_LOGO_SRC = "/key.svg";
 
-const NUM_POINTS = 32; // was 16 — coarse polygons don't read as "that specific silhouette"
+// --- shape constants (original sizing) ---------------------------------
+const NUM_POINTS = 96;
 const CANVAS_CENTER = 100;
 const BASE_RADIUS = 72;
 
 const KEY_SHRINK_FACTOR = 0.42;
 const TARGET_MAX_RADIUS = 90;
 
-function generateFallbackRadii(n: number): Float32Array {
-  // Placeholder shape used before the real silhouette loads. Generated instead of
-  // hardcoded so it always matches NUM_POINTS — a fixed-length array here silently
-  // breaks (NaNs past its length) the moment NUM_POINTS changes.
-  const arr = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const angle = (i / n) * Math.PI * 2;
-    arr[i] = 75 + 12 * Math.cos(angle * 4);
-  }
-  return arr;
-}
-
-// --- phase timing -------------------------------------------------------
-// Three sequential phases instead of two overlapping ones:
-//   liquid  --[0.80]-->  shape locks onto key silhouette  --[0.90]-->  details fade in  --[0.96]-->  rigid/interactive
+// --- phase timing (original) -------------------------------------------
 const FLUID_HOLD_PROGRESS = 0.80;
-const SHAPE_LOCK_PROGRESS = 0.90; // outline fully settled — no more noise/wobble past this point
-const KEY_RIGID_PROGRESS = 0.96;  // detail fully visible, tilt interaction turns on
+const SHAPE_LOCK_PROGRESS = 0.90;
+const KEY_RIGID_PROGRESS = 0.96;
 
 function computeFluidity(p: number): number {
   if (p <= FLUID_HOLD_PROGRESS) {
     return 1 - 0.2 * (p / FLUID_HOLD_PROGRESS);
   }
-  // dies out at SHAPE_LOCK_PROGRESS (not KEY_RIGID_PROGRESS) so the outline is a
-  // still, exact silhouette *before* anything starts fading in on top of it
   const t = Math.min(1, (p - FLUID_HOLD_PROGRESS) / (SHAPE_LOCK_PROGRESS - FLUID_HOLD_PROGRESS));
   const eased = t * t * (3 - 2 * t);
   return 0.8 * (1 - eased);
 }
 
 function computeDetailReveal(p: number): number {
-  // Strictly after shape lock — this is the "immediately afterwards" beat
   const t = Math.min(1, Math.max(0, (p - SHAPE_LOCK_PROGRESS) / (KEY_RIGID_PROGRESS - SHAPE_LOCK_PROGRESS)));
   return t * t * (3 - 2 * t);
 }
@@ -143,6 +138,138 @@ function computeDetailReveal(p: number): number {
 const PROGRESS_LERP = 0.08;
 
 const SPECULAR_PALETTE = ["#ffffff", "#cbd5e1", "#e2e8f0", "#ffffff"];
+
+// --- contour tracing ---------------------------------------------------
+
+function traceContour(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  alphaThreshold: number,
+): { x: number; y: number }[] {
+  const isInk = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false;
+    return data[(y * width + x) * 4 + 3] > alphaThreshold;
+  };
+
+  let startX = -1, startY = -1;
+  outer: for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (isInk(x, y)) { startX = x; startY = y; break outer; }
+    }
+  }
+  if (startX < 0) return [];
+
+  const dx = [1, 1, 0, -1, -1, -1, 0, 1];
+  const dy = [0, 1, 1, 1, 0, -1, -1, -1];
+  const rawPoints: { x: number; y: number }[] = [];
+  let cx = startX, cy = startY;
+  let dir = 7;
+  const maxIter = width * height * 2;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    rawPoints.push({ x: cx, y: cy });
+    let found = false;
+    const searchStart = (dir + 5) % 8;
+    for (let k = 0; k < 8; k++) {
+      const d = (searchStart + k) % 8;
+      const nx = cx + dx[d];
+      const ny = cy + dy[d];
+      if (isInk(nx, ny)) { cx = nx; cy = ny; dir = d; found = true; break; }
+    }
+    if (!found) break;
+    if (cx === startX && cy === startY && rawPoints.length > 2) break;
+  }
+  return rawPoints;
+}
+
+function resampleContour(
+  raw: { x: number; y: number }[],
+  count: number,
+): { x: number; y: number }[] {
+  if (raw.length < 2) return raw;
+
+  const cumLen: number[] = [0];
+  for (let i = 1; i < raw.length; i++) {
+    const dx = raw[i].x - raw[i - 1].x;
+    const dy = raw[i].y - raw[i - 1].y;
+    cumLen.push(cumLen[i - 1] + Math.sqrt(dx * dx + dy * dy));
+  }
+  const cdx = raw[0].x - raw[raw.length - 1].x;
+  const cdy = raw[0].y - raw[raw.length - 1].y;
+  const totalLen = cumLen[cumLen.length - 1] + Math.sqrt(cdx * cdx + cdy * cdy);
+
+  const result: { x: number; y: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const targetDist = (i / count) * totalLen;
+    let segIdx = 0;
+    for (let j = 1; j < cumLen.length; j++) {
+      if (cumLen[j] >= targetDist) { segIdx = j - 1; break; }
+      segIdx = j;
+    }
+
+    if (segIdx >= raw.length - 1) {
+      const segStart = cumLen[cumLen.length - 1];
+      const segLen = totalLen - segStart;
+      const t = segLen > 0 ? (targetDist - segStart) / segLen : 0;
+      result.push({
+        x: raw[raw.length - 1].x + (raw[0].x - raw[raw.length - 1].x) * t,
+        y: raw[raw.length - 1].y + (raw[0].y - raw[raw.length - 1].y) * t,
+      });
+    } else {
+      const segStart = cumLen[segIdx];
+      const segEnd = cumLen[segIdx + 1];
+      const segLen = segEnd - segStart;
+      const t = segLen > 0 ? (targetDist - segStart) / segLen : 0;
+      result.push({
+        x: raw[segIdx].x + (raw[segIdx + 1].x - raw[segIdx].x) * t,
+        y: raw[segIdx].y + (raw[segIdx + 1].y - raw[segIdx].y) * t,
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * Rotate contour point ordering so point[0] is at angle ≈ 0 from centre
+ * (rightmost point), matching the circle's starting angle. Also ensures
+ * the contour winds clockwise in screen-space (Y-down) to match.
+ */
+function alignContourToCircle(
+  pts: { x: number; y: number }[],
+  cx: number,
+  cy: number,
+): { x: number; y: number }[] {
+  // Ensure clockwise winding (negative area in Y-down SVG coords)
+  let windingSum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    windingSum += (b.x - a.x) * (b.y + a.y);
+  }
+  
+  // If windingSum is positive, the contour is counter-clockwise. Reverse it so it matches
+  // the circle's clockwise generation. This completely eliminates twisting/noodling.
+  const ordered = windingSum > 0 ? [...pts].reverse() : pts;
+
+  // Find the point closest to angle 0 (rightmost from centre)
+  let bestIdx = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < ordered.length; i++) {
+    let angle = Math.atan2(ordered[i].y - cy, ordered[i].x - cx);
+    if (angle < 0) angle += Math.PI * 2;
+    
+    let diff = angle;
+    if (diff > Math.PI) diff = Math.PI * 2 - diff;
+    diff = Math.abs(diff);
+    
+    if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+  }
+
+  return [...ordered.slice(bestIdx), ...ordered.slice(0, bestIdx)];
+}
+
+// --- types & props ------------------------------------------------------
 
 interface KeyImagePlacement {
   href: string;
@@ -162,16 +289,17 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const corePathRef = useRef<SVGPathElement>(null);
   const haloPathRef = useRef<SVGPathElement>(null);
   const clipPathRef = useRef<SVGPathElement>(null);
+  const detailClipPathRef = useRef<SVGPathElement>(null);
   const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
-  const logoImageRef = useRef<SVGImageElement>(null); // fallback path, kept for graceful degradation
+  const logoImageRef = useRef<SVGImageElement>(null);
 
   type DetailShape = { tag: string; props: Record<string, any> };
   const [detailShapes, setDetailShapes] = useState<DetailShape[] | null>(null);
   const [detailDefsMarkup, setDetailDefsMarkup] = useState<string | null>(null);
   const [detailViewBox, setDetailViewBox] = useState<string | null>(null);
   const shapeElRefs = useRef<(SVGGraphicsElement | null)[]>([]);
+  const detailGroupRef = useRef<SVGGElement>(null);
 
-  // small helpers, module scope
   function parseStyleAttr(styleStr?: string): React.CSSProperties {
     if (!styleStr) return {};
     const out: Record<string, string> = {};
@@ -191,35 +319,32 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const meshGroupRef = useRef<SVGGElement>(null);
   const meshCircleRefs = useRef<(SVGCircleElement | null)[]>([]);
 
-  const targetRadiiRef = useRef<Float32Array>(generateFallbackRadii(NUM_POINTS));
+  const keyTargetsRef = useRef<{ x: number; y: number }[] | null>(null);
   const keyImageRef = useRef<KeyImagePlacement | null>(null);
   const [keyImageReady, setKeyImageReady] = useState(false);
 
   const progressRef = useRef(progress);
-  useEffect(() => {
-    progressRef.current = progress;
-  }, [progress]);
-
+  useEffect(() => { progressRef.current = progress; }, [progress]);
   const smoothedProgressRef = useRef(0);
 
   const isKeyActive = progress >= KEY_RIGID_PROGRESS;
   const tiltCursorX = useMotionValue(0);
   const tiltCursorY = useMotionValue(0);
-
   const rawRotateX = useTransform(tiltCursorY, (v) => (isKeyActive ? v * -18 : 0));
   const rawRotateY = useTransform(tiltCursorX, (v) => (isKeyActive ? v * 18 : 0));
   const springRotateX = useSpring(rawRotateX, { stiffness: 90, damping: 16 });
   const springRotateY = useSpring(rawRotateY, { stiffness: 90, damping: 16 });
 
   const cursorRef = useRef<{ x: number; y: number; active: boolean }>({
-    x: -9999,
-    y: -9999,
-    active: false,
+    x: -9999, y: -9999, active: false,
   });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Load silhouette → trace contour → resample → scale to viewBox
+  // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
     let cancelled = false;
-    const RASTER = 400;
+    const RASTER = 600;
     const MASK_ALPHA_THRESHOLD = 10;
 
     async function loadKeySilhouette() {
@@ -240,13 +365,9 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           if (!ctx) return;
 
           const aspect = img.naturalWidth / img.naturalHeight;
-          let drawW = RASTER;
-          let drawH = RASTER;
-          if (aspect >= 1) {
-            drawH = RASTER / aspect;
-          } else {
-            drawW = RASTER * aspect;
-          }
+          let drawW = RASTER, drawH = RASTER;
+          if (aspect >= 1) drawH = RASTER / aspect;
+          else drawW = RASTER * aspect;
           const offsetX = (RASTER - drawW) / 2;
           const offsetY = (RASTER - drawH) / 2;
 
@@ -260,63 +381,64 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             console.warn("BlobMorph: could not read silhouette pixel data", err);
             return;
           }
-          const data = imageData.data;
 
-          const isInk = (x: number, y: number) => {
-            if (x < 0 || y < 0 || x >= RASTER || y >= RASTER) return false;
-            const idx = (Math.floor(y) * RASTER + Math.floor(x)) * 4;
-            return data[idx + 3] > MASK_ALPHA_THRESHOLD;
-          };
-
-          let minX = RASTER, maxX = 0, minY = RASTER, maxY = 0;
-          let found = false;
-          for (let y = 0; y < RASTER; y += 2) {
-            for (let x = 0; x < RASTER; x += 2) {
-              if (isInk(x, y)) {
-                found = true;
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
-              }
-            }
-          }
-          if (!found || maxX <= minX || maxY <= minY) {
+          // Trace the exact boundary
+          const contour = traceContour(imageData.data, RASTER, RASTER, MASK_ALPHA_THRESHOLD);
+          if (contour.length < 10) {
+            console.warn("BlobMorph: contour too sparse");
             return;
           }
 
-          const centroidX = (minX + maxX) / 2;
-          const centroidY = (minY + maxY) / 2;
+          // Centroid of contour in raster space
+          let sumX = 0, sumY = 0;
+          for (const p of contour) { sumX += p.x; sumY += p.y; }
+          const centroidX = sumX / contour.length;
+          const centroidY = sumY / contour.length;
 
-          const rawRadii = new Float32Array(NUM_POINTS);
-          for (let i = 0; i < NUM_POINTS; i++) {
-            const angle = (i / NUM_POINTS) * Math.PI * 2;
-            const dx = Math.cos(angle);
-            const dy = Math.sin(angle);
-            let r = 0;
-            while (r < RASTER && isInk(centroidX + dx * r, centroidY + dy * r)) {
-              r += 1;
-            }
-            rawRadii[i] = r;
+          // Max radius from centroid (raster pixels)
+          let maxRawRadius = 0;
+          for (const p of contour) {
+            const r = Math.hypot(p.x - centroidX, p.y - centroidY);
+            if (r > maxRawRadius) maxRawRadius = r;
           }
+          if (maxRawRadius < 1) return;
 
-          const maxRawRadius = Math.max(...Array.from(rawRadii), 1);
-          const normalizedRadii = Float32Array.from(
-            rawRadii,
-            (r) => (r / maxRawRadius) * TARGET_MAX_RADIUS
-          );
+          // Resample to NUM_POINTS
+          const resampled = resampleContour(contour, NUM_POINTS);
 
+          // Scale: maps raster → viewBox so max radius = TARGET_MAX_RADIUS * KEY_SHRINK_FACTOR
           const scale = (TARGET_MAX_RADIUS * KEY_SHRINK_FACTOR) / maxRawRadius;
 
-          targetRadiiRef.current = normalizedRadii;
+          // Convert to viewBox coords centred at CANVAS_CENTER
+          const targets = resampled.map((p) => ({
+            x: CANVAS_CENTER + (p.x - centroidX) * scale,
+            y: CANVAS_CENTER + (p.y - centroidY) * scale,
+          }));
+
+          // Align winding + starting point with circle
+          const aligned = alignContourToCircle(targets, CANVAS_CENTER, CANVAS_CENTER);
+          keyTargetsRef.current = aligned;
+
+          // Image placement: bounding box of target contour in viewBox space
+          // This guarantees the detail image sits exactly where the morphed outline is
+          let bbMinX = Infinity, bbMaxX = -Infinity, bbMinY = Infinity, bbMaxY = -Infinity;
+          for (const p of aligned) {
+            if (p.x < bbMinX) bbMinX = p.x;
+            if (p.x > bbMaxX) bbMaxX = p.x;
+            if (p.y < bbMinY) bbMinY = p.y;
+            if (p.y > bbMaxY) bbMaxY = p.y;
+          }
+          const PAD = 1;
           keyImageRef.current = {
             href: DETAIL_LOGO_SRC,
-            x: CANVAS_CENTER - centroidX * scale,
-            y: CANVAS_CENTER - centroidY * scale,
-            width: drawW * scale,
-            height: drawH * scale,
+            x: bbMinX - PAD,
+            y: bbMinY - PAD,
+            width: (bbMaxX - bbMinX) + PAD * 2,
+            height: (bbMaxY - bbMinY) + PAD * 2,
           };
           setKeyImageReady(true);
+
+          URL.revokeObjectURL(url);
         };
 
         img.src = url;
@@ -326,18 +448,18 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     }
 
     loadKeySilhouette();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Animation loop
+  // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
     const shapeNoise = new SimplexNoise();
     const meshNoise = new SimplexNoise();
 
     const IDLE_AMPLITUDE_MAX = 9;
     const IDLE_SPEED = 0.00045;
-
     const STRETCH_STRENGTH_MAX = 24;
     const STIFFNESS = 0.06;
     const DAMPING = 0.82;
@@ -349,12 +471,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     const meshAngles = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];
 
     const handleMouseMove = (e: MouseEvent) => {
-      cursorRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        active: true,
-      };
-
+      cursorRef.current = { x: e.clientX, y: e.clientY, active: true };
       const cx = window.innerWidth / 2;
       const cy = window.innerHeight / 2;
       tiltCursorX.set((e.clientX - cx) / cx);
@@ -387,9 +504,14 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       const idleAmplitude = IDLE_AMPLITUDE_MAX * fluidityFactor;
       const stretchStrength = STRETCH_STRENGTH_MAX * fluidityFactor;
 
+      // Adaptive sharpness: smooth blob → sharp key outline
+      const sharpness = Math.min(1, Math.max(0,
+        (currentProgress - 0.6) / (SHAPE_LOCK_PROGRESS - 0.6)
+      ));
+
+      // SVG center in screen coords for cursor influence
       let svgCenterX = window.innerWidth / 2;
       let svgCenterY = window.innerHeight / 2;
-
       if (svgRef.current) {
         const rect = svgRef.current.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
@@ -399,7 +521,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       }
 
       const maxRange = Math.max(window.innerWidth, window.innerHeight) * 0.75;
-
       let influenceFactor = 0;
       let cursorAngle = 0;
 
@@ -407,83 +528,113 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         const dx = cursor.x - svgCenterX;
         const dy = cursor.y - svgCenterY;
         const dist = Math.hypot(dx, dy);
-
         if (dist < maxRange) {
           influenceFactor = Math.pow(1 - dist / maxRange, 1.5) * fluidityFactor;
           cursorAngle = Math.atan2(dy, dx);
         }
       }
 
-      const rawTargets = new Float32Array(NUM_POINTS);
-      let totalTarget = 0;
+      const keyTargets = keyTargetsRef.current;
 
-      if (influenceFactor > 0) {
-        for (let i = 0; i < NUM_POINTS; i++) {
-          const angle = (i / NUM_POINTS) * Math.PI * 2;
-          let angleDiff = angle - cursorAngle;
-          angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
-
-          const frontFocus = Math.max(0, Math.cos(angleDiff));
-          const pull = Math.pow(frontFocus, 2.2) * influenceFactor * stretchStrength;
-
-          rawTargets[i] = pull;
-          totalTarget += pull;
-        }
-
-        const meanTarget = totalTarget / NUM_POINTS;
-        for (let i = 0; i < NUM_POINTS; i++) {
-          rawTargets[i] -= meanTarget * 0.95;
+      // ── Calculate interpolated polar angles ──
+      // This is the core fix to prevent "noodling". Instead of lerping X and Y separately
+      // (which drags points across the shape), we explicitly lerp the angle and radius
+      // from the center. This gives a perfect radial "shrink" behavior without tangling.
+      const currentAngles = new Float32Array(NUM_POINTS);
+      for (let i = 0; i < NUM_POINTS; i++) {
+        const circleAngle = (i / NUM_POINTS) * Math.PI * 2;
+        if (!keyTargets) {
+          currentAngles[i] = circleAngle;
+        } else {
+          const kx = keyTargets[i].x;
+          const ky = keyTargets[i].y;
+          const keyAngle = Math.atan2(ky - CANVAS_CENTER, kx - CANVAS_CENTER);
+          let dAngle = keyAngle - circleAngle;
+          // Ensure we rotate via the shortest path to avoid twisting
+          if (dAngle > Math.PI) dAngle -= Math.PI * 2;
+          if (dAngle < -Math.PI) dAngle += Math.PI * 2;
+          currentAngles[i] = circleAngle + dAngle * currentProgress;
         }
       }
 
+      // Cursor repulsion targets
+      const rawTargets = new Float32Array(NUM_POINTS);
+      let totalTarget = 0;
+      if (influenceFactor > 0) {
+        for (let i = 0; i < NUM_POINTS; i++) {
+          const angle = currentAngles[i];
+          let angleDiff = angle - cursorAngle;
+          angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+          const frontFocus = Math.max(0, Math.cos(angleDiff));
+          rawTargets[i] = Math.pow(frontFocus, 2.2) * influenceFactor * stretchStrength;
+          totalTarget += rawTargets[i];
+        }
+        const meanTarget = totalTarget / NUM_POINTS;
+        for (let i = 0; i < NUM_POINTS; i++) rawTargets[i] -= meanTarget * 0.95;
+      }
+
+      // Spring integration
       for (let i = 0; i < NUM_POINTS; i++) {
         const force = (rawTargets[i] - rOffsets[i]) * STIFFNESS;
         rVelocities[i] = (rVelocities[i] + force) * DAMPING;
         rOffsets[i] += rVelocities[i];
       }
 
+      // Smooth across neighbours
       const smoothedOffsets = new Float32Array(NUM_POINTS);
       for (let i = 0; i < NUM_POINTS; i++) {
         const prev = rOffsets[(i - 1 + NUM_POINTS) % NUM_POINTS];
         const curr = rOffsets[i];
         const next = rOffsets[(i + 1) % NUM_POINTS];
-
         smoothedOffsets[i] = curr * 0.6 + (prev + next) * 0.2;
       }
 
+      // ── Build morphed points (Polar Interpolation) ─────────────────
       const points: { x: number; y: number }[] = [];
-      const targetRadii = targetRadiiRef.current;
 
       for (let i = 0; i < NUM_POINTS; i++) {
-        const angle = (i / NUM_POINTS) * Math.PI * 2;
-        const cosA = Math.cos(angle);
-        const sinA = Math.sin(angle);
+        const circleAngle = (i / NUM_POINTS) * Math.PI * 2;
+        const circleRadius = BASE_RADIUS;
+        const currentAngle = currentAngles[i];
 
-        const targetKeyRadius = targetRadii[i] * KEY_SHRINK_FACTOR;
-        const baseMorphRadius =
-          (1 - currentProgress) * BASE_RADIUS + currentProgress * targetKeyRadius;
+        let currentRadius = circleRadius;
+        if (keyTargets) {
+          const kx = keyTargets[i].x;
+          const ky = keyTargets[i].y;
+          const keyRadius = Math.hypot(kx - CANVAS_CENTER, ky - CANVAS_CENTER);
+          currentRadius = circleRadius + (keyRadius - circleRadius) * currentProgress;
+        } else {
+          currentRadius = circleRadius + ((circleRadius * KEY_SHRINK_FACTOR) - circleRadius) * currentProgress;
+        }
 
+        const baseX = CANVAS_CENTER + Math.cos(currentAngle) * currentRadius;
+        const baseY = CANVAS_CENTER + Math.sin(currentAngle) * currentRadius;
+
+        // Radial noise mapping uses the current angle so it tracks cleanly
+        const cosA = Math.cos(currentAngle);
+        const sinA = Math.sin(currentAngle);
         const n = shapeNoise.noise2D(cosA * 0.9, sinA * 0.9 + time);
-        const idleRadius = baseMorphRadius + n * idleAmplitude;
+        const noiseOffset = n * idleAmplitude;
 
-        const finalRadius = idleRadius + smoothedOffsets[i];
+        const totalRadialOffset = noiseOffset + smoothedOffsets[i];
 
         points.push({
-          x: CANVAS_CENTER + finalRadius * cosA,
-          y: CANVAS_CENTER + finalRadius * sinA,
+          x: baseX + cosA * totalRadialOffset,
+          y: baseY + sinA * totalRadialOffset,
         });
       }
 
-      const dString = buildSmoothPath(points);
+      // Build path with adaptive smoothing
+      const dString = buildAdaptivePath(points, sharpness);
       if (corePathRef.current) corePathRef.current.setAttribute("d", dString);
       if (haloPathRef.current) haloPathRef.current.setAttribute("d", dString);
       if (clipPathRef.current) clipPathRef.current.setAttribute("d", dString);
+      if (detailClipPathRef.current) detailClipPathRef.current.setAttribute("d", dString);
 
-      // Sequenced reveal: only starts once the shape has locked onto the silhouette
+      // ── Detail reveal ──────────────────────────────────────────
       const detailReveal = computeDetailReveal(currentProgress);
 
-      // Halo now floors instead of hitting zero — on a pure-black page, this soft
-      // haze is the only thing separating the shape from the background at rest.
+      // Halo glow
       if (glowBlurRef.current) {
         const currentBlur = 4 + 8 * (1 - detailReveal);
         glowBlurRef.current.setAttribute("stdDeviation", currentBlur.toFixed(2));
@@ -492,42 +643,42 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         haloPathRef.current.style.opacity = String(0.03 + 0.09 * (1 - detailReveal));
       }
 
-      // Core stays flat black once it's locked into the logo shape — matches the
-      // logo's own material instead of keeping the liquid gradient sheen.
+      // Core: the dark surface that covers the detail underneath.
+      // As detail reveals, core becomes transparent → key emerges FROM the blob
       if (corePathRef.current) {
-        const useFlatBlack = detailReveal > 0;
-        corePathRef.current.style.fill = useFlatBlack ? "#000000" : "url(#obsidian-body-grad)";
+        corePathRef.current.style.fill = "url(#obsidian-body-grad)";
         corePathRef.current.style.stroke = "url(#obsidian-rim-grad)";
-        corePathRef.current.style.opacity = "1";
-        corePathRef.current.style.strokeWidth = (0.8 + 0.4 * detailReveal).toFixed(2);
+        // Core opacity fades to reveal the detail image beneath it
+        corePathRef.current.style.opacity = String(1 - detailReveal);
+        // Thicken rim during morph so the shape change is visible
+        const morphRim = currentProgress > 0.3
+          ? 0.6 * Math.min(1, (currentProgress - 0.3) / 0.4)
+          : 0;
+        corePathRef.current.style.strokeWidth = (0.8 + morphRim + 0.4 * detailReveal).toFixed(2);
       }
 
-      // Specular sheen is a liquid-only cue — fully gone once rigid, no floor needed
+      // Specular sheen fades as key solidifies
       if (meshGroupRef.current) {
         meshGroupRef.current.style.opacity = String(0.6 * (1 - detailReveal));
       }
 
-      // Detail reveal: shapes near the group's own center commit first, and the
-      // wave travels outward as detailReveal grows — same expanding motion as the
-      // shape morph, just continuing into the artwork instead of a flat crossfade.
-      // Reveal by paint order (the order shapes appear in the source file) instead of
-      // spatial distance — a trace tool already draws base fills before fine detail,
-      // so document order already encodes "structural first, detail last." This also
-      // sidesteps the bug where one huge enclosing shape's bbox-center sits near the
-      // overall centroid and gets misread as "central" instead of "outer."
+      // Detail group (clipped to morph shape): always full opacity in shapes,
+      // the core path above it controls visibility
+      if (detailGroupRef.current) {
+        // Keep detail shapes at full opacity — the core path above hides them
+        // until detailReveal kicks in and fades the core away
+        detailGroupRef.current.style.opacity = "1";
+      }
+      // Set individual shapes to full opacity (the core covers them)
       if (shapeElRefs.current.length) {
-        const n = shapeElRefs.current.length;
-        const REVEAL_BAND = 0.25;
-        shapeElRefs.current.forEach((el, i) => {
-          if (!el) return;
-          const t = n <= 1 ? 0 : i / (n - 1);
-          const raw = (detailReveal * (1 + REVEAL_BAND) - t) / REVEAL_BAND;
-          el.style.opacity = String(Math.min(1, Math.max(0, raw)));
+        shapeElRefs.current.forEach((el) => {
+          if (el) el.style.opacity = "1";
         });
       } else if (logoImageRef.current) {
-        logoImageRef.current.style.opacity = String(detailReveal);
+        logoImageRef.current.style.opacity = "1";
       }
 
+      // Specular mesh drift
       for (let p = 0; p < MESH_PATCH_COUNT; p++) {
         const baseA = meshAngles[p] + time * 1.2;
         const nX = meshNoise.noise2D(time * 1.5 + p, p * 10);
@@ -557,6 +708,9 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     };
   }, [tiltCursorX, tiltCursorY]);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Load detail SVG shapes
+  // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
     let cancelled = false;
     async function loadDetailShapes() {
@@ -568,8 +722,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         if (!svgEl || cancelled) return;
 
         const vb = svgEl.getAttribute("viewBox");
-        const defsEl = svgEl.querySelector("defs"); // carry over any internal gradients/clip-paths
-
+        const defsEl = svgEl.querySelector("defs");
         const nodes = Array.from(
           svgEl.querySelectorAll("path, circle, ellipse, rect, polygon, polyline")
         );
@@ -591,6 +744,13 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     return () => { cancelled = true; };
   }, []);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Render — layer order matters:
+  //   1. Halo (ambient glow, behind everything)
+  //   2. Detail image (clipped to morph shape — always ready, hidden by core)
+  //   3. Core path (dark fill — fades away to reveal detail beneath)
+  //   4. Specular mesh (liquid sheen, fades out)
+  // ═══════════════════════════════════════════════════════════════════════
   return (
     <motion.div className="fixed inset-0 z-10 flex items-center justify-center pointer-events-none">
       <motion.svg
@@ -607,6 +767,10 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         <defs>
           <clipPath id="blob-mesh-clip">
             <path ref={clipPathRef} />
+          </clipPath>
+
+          <clipPath id="detail-clip">
+            <path ref={detailClipPathRef} />
           </clipPath>
 
           <filter id="blob-ambient-halo" x="-50%" y="-50%" width="200%" height="200%">
@@ -646,17 +810,65 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           ))}
         </defs>
 
+        {/* 1. Ambient halo */}
         <path ref={haloPathRef} fill="#ffffff" filter="url(#blob-ambient-halo)" />
 
+        {/* 2. Detail image — clipped to the morphing shape so it's always
+               shaped by the outline. Hidden by the core path until reveal. */}
+        {keyImageReady && keyImageRef.current && (
+          <g ref={detailGroupRef} clipPath="url(#detail-clip)">
+            {detailShapes && detailViewBox ? (
+              <svg
+                x={keyImageRef.current.x}
+                y={keyImageRef.current.y}
+                width={keyImageRef.current.width}
+                height={keyImageRef.current.height}
+                viewBox={detailViewBox}
+                filter="url(#logo-glow-filter)"
+                preserveAspectRatio="xMidYMid meet"
+              >
+                {detailDefsMarkup && (
+                  <g dangerouslySetInnerHTML={{ __html: detailDefsMarkup }} />
+                )}
+                {detailShapes.map((shape, i) => {
+                  const Tag = shape.tag as any;
+                  return (
+                    <Tag
+                      key={i}
+                      {...shape.props}
+                      ref={(el: SVGGraphicsElement | null) => { shapeElRefs.current[i] = el; }}
+                      style={{ ...shape.props.style, opacity: 1 }}
+                    />
+                  );
+                })}
+              </svg>
+            ) : (
+              <image
+                ref={logoImageRef}
+                href={keyImageRef.current.href}
+                x={keyImageRef.current.x}
+                y={keyImageRef.current.y}
+                width={keyImageRef.current.width}
+                height={keyImageRef.current.height}
+                filter="url(#logo-glow-filter)"
+                style={{ opacity: 1 }}
+                preserveAspectRatio="xMidYMid meet"
+              />
+            )}
+          </g>
+        )}
+
+        {/* 3. Core dark fill — sits ON TOP of the detail layer.
+               Fades from opaque → transparent as the key solidifies,
+               revealing the detail image beneath. Same morphing outline. */}
         <path ref={corePathRef} />
 
+        {/* 4. Specular mesh (liquid sheen, fades out) */}
         <g ref={meshGroupRef} clipPath="url(#blob-mesh-clip)" style={{ mixBlendMode: "screen" }}>
           {SPECULAR_PALETTE.map((_, i) => (
             <circle
               key={i}
-              ref={(el) => {
-                meshCircleRefs.current[i] = el;
-              }}
+              ref={(el) => { meshCircleRefs.current[i] = el; }}
               cx={CANVAS_CENTER}
               cy={CANVAS_CENTER}
               r={55}
@@ -664,48 +876,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             />
           ))}
         </g>
-
-        {/* --- replace the old <image> block with this --- */}
-        {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
-          <svg
-            x={keyImageRef.current.x}
-            y={keyImageRef.current.y}
-            width={keyImageRef.current.width}
-            height={keyImageRef.current.height}
-            viewBox={detailViewBox}
-            filter="url(#logo-glow-filter)"
-            preserveAspectRatio="xMidYMid meet"
-          >
-            {detailDefsMarkup && (
-              <g dangerouslySetInnerHTML={{ __html: detailDefsMarkup }} />
-            )}
-            {detailShapes.map((shape, i) => {
-              const Tag = shape.tag as any;
-              return (
-                <Tag
-                  key={i}
-                  {...shape.props}
-                  ref={(el: SVGGraphicsElement | null) => { shapeElRefs.current[i] = el; }}
-                  style={{ ...shape.props.style, opacity: 0 }}
-                />
-              );
-            })}
-          </svg>
-        ) : (
-          keyImageReady && keyImageRef.current && (
-            <image
-              ref={logoImageRef}
-              href={keyImageRef.current.href}
-              x={keyImageRef.current.x}
-              y={keyImageRef.current.y}
-              width={keyImageRef.current.width}
-              height={keyImageRef.current.height}
-              filter="url(#logo-glow-filter)"
-              style={{ opacity: 0 }}
-              preserveAspectRatio="xMidYMid meet"
-            />
-          )
-        )}
       </motion.svg>
     </motion.div>
   );
