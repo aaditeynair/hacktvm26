@@ -89,25 +89,23 @@ function buildSmoothPath(points: { x: number; y: number }[]): string {
 }
 
 // --- assets -----------------------------------------------------------
-// SILHOUETTE_SRC is used ONLY to derive the outline shape (radii + placement math).
-// DETAIL_LOGO_SRC is what actually gets rendered as the reveal. If your logo art
-// has real inner detail (engraving lines, a cutout, whatever), point this there —
-// if it's the same flat silhouette, the "reveal" will just be a hardening, no
-// separate detail beat, which is honest but not what you described wanting.
 const SILHOUETTE_SRC = "/silhouette.svg";
-const DETAIL_LOGO_SRC = "/key.svg"; // <-- swap this to your detailed asset
+const DETAIL_LOGO_SRC = "/key.svg";
 
-const NUM_POINTS = 32; // was 16 — coarse polygons don't read as "that specific silhouette"
+const NUM_POINTS = 32;
 const CANVAS_CENTER = 100;
 const BASE_RADIUS = 72;
 
 const KEY_SHRINK_FACTOR = 0.42;
 const TARGET_MAX_RADIUS = 90;
 
+// Manual fine-tune for detail-logo placement relative to the core polygon.
+// In viewBox units (viewBox is 200 units wide) — not px, so it scales
+// consistently across breakpoints. Nudge and reload to dial in.
+const LOGO_OFFSET_X = 0;
+const LOGO_OFFSET_Y = 5;
+
 function generateFallbackRadii(n: number): Float32Array {
-  // Placeholder shape used before the real silhouette loads. Generated instead of
-  // hardcoded so it always matches NUM_POINTS — a fixed-length array here silently
-  // breaks (NaNs past its length) the moment NUM_POINTS changes.
   const arr = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const angle = (i / n) * Math.PI * 2;
@@ -117,32 +115,29 @@ function generateFallbackRadii(n: number): Float32Array {
 }
 
 // --- phase timing -------------------------------------------------------
-// Three sequential phases instead of two overlapping ones:
-//   liquid  --[0.80]-->  shape locks onto key silhouette  --[0.90]-->  details fade in  --[0.96]-->  rigid/interactive
-const FLUID_HOLD_PROGRESS = 0.80;
-const SHAPE_LOCK_PROGRESS = 0.90; // outline fully settled — no more noise/wobble past this point
-const KEY_RIGID_PROGRESS = 0.96;  // detail fully visible, tilt interaction turns on
+const FLUID_HOLD_PROGRESS = 0.62;  // outline starts pulling toward the key shape
+const SHAPE_LOCK_PROGRESS = 0.92;  // fully settled — permanent black key silhouette from here
+const KEY_RIGID_PROGRESS = 0.97;   // detail fully visible, tilt interaction turns on
 
 function computeFluidity(p: number): number {
   if (p <= FLUID_HOLD_PROGRESS) {
     return 1 - 0.2 * (p / FLUID_HOLD_PROGRESS);
   }
-  // dies out at SHAPE_LOCK_PROGRESS (not KEY_RIGID_PROGRESS) so the outline is a
-  // still, exact silhouette *before* anything starts fading in on top of it
   const t = Math.min(1, (p - FLUID_HOLD_PROGRESS) / (SHAPE_LOCK_PROGRESS - FLUID_HOLD_PROGRESS));
   const eased = t * t * (3 - 2 * t);
   return 0.8 * (1 - eased);
 }
 
+function computeShapeBlend(p: number): number {
+  return Math.min(1, p / SHAPE_LOCK_PROGRESS);
+}
+
 function computeDetailReveal(p: number): number {
-  // Strictly after shape lock — this is the "immediately afterwards" beat
   const t = Math.min(1, Math.max(0, (p - SHAPE_LOCK_PROGRESS) / (KEY_RIGID_PROGRESS - SHAPE_LOCK_PROGRESS)));
   return t * t * (3 - 2 * t);
 }
 
-const PROGRESS_LERP = 0.08;
-
-const SPECULAR_PALETTE = ["#ffffff", "#cbd5e1", "#e2e8f0", "#ffffff"];
+const PROGRESS_LERP = 0.06;
 
 interface KeyImagePlacement {
   href: string;
@@ -150,6 +145,35 @@ interface KeyImagePlacement {
   y: number;
   width: number;
   height: number;
+}
+
+type DetailShape = { tag: string; props: Record<string, any> };
+
+function parseStyleAttr(styleStr?: string): React.CSSProperties {
+  if (!styleStr) return {};
+  const out: Record<string, string> = {};
+  styleStr.split(";").forEach((decl) => {
+    const [prop, val] = decl.split(":");
+    if (prop && val) out[prop.trim()] = val.trim();
+  });
+  return out as React.CSSProperties;
+}
+function toReactProps(raw: Record<string, string>): Record<string, any> {
+  const { class: cls, style, ...rest } = raw;
+  const out: Record<string, any> = { ...rest, style: parseStyleAttr(style) };
+  if (cls) out.className = cls;
+  return out;
+}
+function extractShapes(svgEl: SVGSVGElement): DetailShape[] {
+  const nodes = Array.from(
+    svgEl.querySelectorAll("path, circle, ellipse, rect, polygon, polyline")
+  );
+  return nodes.map((el) => ({
+    tag: el.tagName.toLowerCase(),
+    props: toReactProps(
+      Object.fromEntries(Array.from(el.attributes).map((a) => [a.name, a.value]))
+    ),
+  }));
 }
 
 interface BlobMorphProps {
@@ -161,35 +185,13 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
   const corePathRef = useRef<SVGPathElement>(null);
   const haloPathRef = useRef<SVGPathElement>(null);
-  const clipPathRef = useRef<SVGPathElement>(null);
   const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
-  const logoImageRef = useRef<SVGImageElement>(null); // fallback path, kept for graceful degradation
+  const logoImageRef = useRef<SVGImageElement>(null); // fallback, kept for graceful degradation
 
-  type DetailShape = { tag: string; props: Record<string, any> };
   const [detailShapes, setDetailShapes] = useState<DetailShape[] | null>(null);
   const [detailDefsMarkup, setDetailDefsMarkup] = useState<string | null>(null);
   const [detailViewBox, setDetailViewBox] = useState<string | null>(null);
   const shapeElRefs = useRef<(SVGGraphicsElement | null)[]>([]);
-
-  // small helpers, module scope
-  function parseStyleAttr(styleStr?: string): React.CSSProperties {
-    if (!styleStr) return {};
-    const out: Record<string, string> = {};
-    styleStr.split(";").forEach((decl) => {
-      const [prop, val] = decl.split(":");
-      if (prop && val) out[prop.trim()] = val.trim();
-    });
-    return out as React.CSSProperties;
-  }
-  function toReactProps(raw: Record<string, string>): Record<string, any> {
-    const { class: cls, style, ...rest } = raw;
-    const out: Record<string, any> = { ...rest, style: parseStyleAttr(style) };
-    if (cls) out.className = cls;
-    return out;
-  }
-
-  const meshGroupRef = useRef<SVGGElement>(null);
-  const meshCircleRefs = useRef<(SVGCircleElement | null)[]>([]);
 
   const targetRadiiRef = useRef<Float32Array>(generateFallbackRadii(NUM_POINTS));
   const keyImageRef = useRef<KeyImagePlacement | null>(null);
@@ -332,8 +334,29 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadDetailShapes() {
+      try {
+        const res = await fetch(DETAIL_LOGO_SRC);
+        const svgText = await res.text();
+        const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+        const svgEl = doc.querySelector("svg");
+        if (!svgEl || cancelled) return;
+
+        const defsEl = svgEl.querySelector("defs");
+        setDetailViewBox(svgEl.getAttribute("viewBox"));
+        setDetailDefsMarkup(defsEl ? defsEl.outerHTML : null);
+        setDetailShapes(extractShapes(svgEl));
+      } catch (err) {
+        console.warn("BlobMorph: could not parse detail shapes, falling back to flat image", err);
+      }
+    }
+    loadDetailShapes();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     const shapeNoise = new SimplexNoise();
-    const meshNoise = new SimplexNoise();
 
     const IDLE_AMPLITUDE_MAX = 9;
     const IDLE_SPEED = 0.00045;
@@ -344,9 +367,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
     const rOffsets = new Float32Array(NUM_POINTS);
     const rVelocities = new Float32Array(NUM_POINTS);
-
-    const MESH_PATCH_COUNT = SPECULAR_PALETTE.length;
-    const meshAngles = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];
 
     const handleMouseMove = (e: MouseEvent) => {
       cursorRef.current = {
@@ -384,6 +404,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       const currentProgress = smoothedProgressRef.current;
 
       const fluidityFactor = computeFluidity(currentProgress);
+      const shapeBlend = computeShapeBlend(currentProgress);
       const idleAmplitude = IDLE_AMPLITUDE_MAX * fluidityFactor;
       const stretchStrength = STRETCH_STRENGTH_MAX * fluidityFactor;
 
@@ -461,7 +482,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
         const targetKeyRadius = targetRadii[i] * KEY_SHRINK_FACTOR;
         const baseMorphRadius =
-          (1 - currentProgress) * BASE_RADIUS + currentProgress * targetKeyRadius;
+          (1 - shapeBlend) * BASE_RADIUS + shapeBlend * targetKeyRadius;
 
         const n = shapeNoise.noise2D(cosA * 0.9, sinA * 0.9 + time);
         const idleRadius = baseMorphRadius + n * idleAmplitude;
@@ -477,13 +498,9 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       const dString = buildSmoothPath(points);
       if (corePathRef.current) corePathRef.current.setAttribute("d", dString);
       if (haloPathRef.current) haloPathRef.current.setAttribute("d", dString);
-      if (clipPathRef.current) clipPathRef.current.setAttribute("d", dString);
 
-      // Sequenced reveal: only starts once the shape has locked onto the silhouette
       const detailReveal = computeDetailReveal(currentProgress);
 
-      // Halo now floors instead of hitting zero — on a pure-black page, this soft
-      // haze is the only thing separating the shape from the background at rest.
       if (glowBlurRef.current) {
         const currentBlur = 4 + 8 * (1 - detailReveal);
         glowBlurRef.current.setAttribute("stdDeviation", currentBlur.toFixed(2));
@@ -492,29 +509,15 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         haloPathRef.current.style.opacity = String(0.03 + 0.09 * (1 - detailReveal));
       }
 
-      // Core stays flat black once it's locked into the logo shape — matches the
-      // logo's own material instead of keeping the liquid gradient sheen.
+      // Core: flat black, always, no conditional and no gradient/stroke —
+      // simplest possible, guaranteed pitch black at every point in the scroll,
+      // nothing left that can look "off-black" or swap abruptly.
       if (corePathRef.current) {
-        const useFlatBlack = detailReveal > 0;
-        corePathRef.current.style.fill = useFlatBlack ? "#000000" : "url(#obsidian-body-grad)";
-        corePathRef.current.style.stroke = "url(#obsidian-rim-grad)";
+        corePathRef.current.style.fill = "#000000";
+        corePathRef.current.style.stroke = "none";
         corePathRef.current.style.opacity = "1";
-        corePathRef.current.style.strokeWidth = (0.8 + 0.4 * detailReveal).toFixed(2);
       }
 
-      // Specular sheen is a liquid-only cue — fully gone once rigid, no floor needed
-      if (meshGroupRef.current) {
-        meshGroupRef.current.style.opacity = String(0.6 * (1 - detailReveal));
-      }
-
-      // Detail reveal: shapes near the group's own center commit first, and the
-      // wave travels outward as detailReveal grows — same expanding motion as the
-      // shape morph, just continuing into the artwork instead of a flat crossfade.
-      // Reveal by paint order (the order shapes appear in the source file) instead of
-      // spatial distance — a trace tool already draws base fills before fine detail,
-      // so document order already encodes "structural first, detail last." This also
-      // sidesteps the bug where one huge enclosing shape's bbox-center sits near the
-      // overall centroid and gets misread as "central" instead of "outer."
       if (shapeElRefs.current.length) {
         const n = shapeElRefs.current.length;
         const REVEAL_BAND = 0.25;
@@ -528,23 +531,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         logoImageRef.current.style.opacity = String(detailReveal);
       }
 
-      for (let p = 0; p < MESH_PATCH_COUNT; p++) {
-        const baseA = meshAngles[p] + time * 1.2;
-        const nX = meshNoise.noise2D(time * 1.5 + p, p * 10);
-        const nY = meshNoise.noise2D(p * 10, time * 1.5 + p);
-
-        const orbitRadius = 18 + nX * 8;
-        const driftX = Math.cos(baseA) * orbitRadius + nX * 10;
-        const driftY = Math.sin(baseA) * orbitRadius + nY * 10;
-
-        const circle = meshCircleRefs.current[p];
-        if (circle) {
-          circle.setAttribute("cx", String(CANVAS_CENTER + driftX));
-          circle.setAttribute("cy", String(CANVAS_CENTER + driftY));
-          circle.setAttribute("r", "55");
-        }
-      }
-
       rafId = requestAnimationFrame(tick);
     };
 
@@ -556,40 +542,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       document.removeEventListener("mouseleave", handleMouseLeave);
     };
   }, [tiltCursorX, tiltCursorY]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadDetailShapes() {
-      try {
-        const res = await fetch(DETAIL_LOGO_SRC);
-        const svgText = await res.text();
-        const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-        const svgEl = doc.querySelector("svg");
-        if (!svgEl || cancelled) return;
-
-        const vb = svgEl.getAttribute("viewBox");
-        const defsEl = svgEl.querySelector("defs"); // carry over any internal gradients/clip-paths
-
-        const nodes = Array.from(
-          svgEl.querySelectorAll("path, circle, ellipse, rect, polygon, polyline")
-        );
-        const shapes: DetailShape[] = nodes.map((el) => ({
-          tag: el.tagName.toLowerCase(),
-          props: toReactProps(
-            Object.fromEntries(Array.from(el.attributes).map((a) => [a.name, a.value]))
-          ),
-        }));
-
-        setDetailViewBox(vb);
-        setDetailDefsMarkup(defsEl ? defsEl.outerHTML : null);
-        setDetailShapes(shapes);
-      } catch (err) {
-        console.warn("BlobMorph: could not parse detail shapes, falling back to flat image", err);
-      }
-    }
-    loadDetailShapes();
-    return () => { cancelled = true; };
-  }, []);
 
   return (
     <motion.div className="fixed inset-0 z-10 flex items-center justify-center pointer-events-none">
@@ -605,10 +557,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         }}
       >
         <defs>
-          <clipPath id="blob-mesh-clip">
-            <path ref={clipPathRef} />
-          </clipPath>
-
           <filter id="blob-ambient-halo" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="12" />
           </filter>
@@ -623,53 +571,16 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-
-          <linearGradient id="obsidian-body-grad" x1="20%" y1="15%" x2="80%" y2="85%">
-            <stop offset="0%" stopColor="#101014" />
-            <stop offset="35%" stopColor="#040405" />
-            <stop offset="100%" stopColor="#000000" />
-          </linearGradient>
-
-          <linearGradient id="obsidian-rim-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity={0.65} />
-            <stop offset="30%" stopColor="#ffffff" stopOpacity={0.15} />
-            <stop offset="70%" stopColor="#ffffff" stopOpacity={0.02} />
-            <stop offset="100%" stopColor="#ffffff" stopOpacity={0.35} />
-          </linearGradient>
-
-          {SPECULAR_PALETTE.map((colorHex, i) => (
-            <radialGradient key={i} id={`specular-patch-${i}`} cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor={colorHex} stopOpacity={i === 0 ? 0.12 : 0.06} />
-              <stop offset="20%" stopColor={colorHex} stopOpacity={i === 0 ? 0.03 : 0.01} />
-              <stop offset="100%" stopColor={colorHex} stopOpacity={0} />
-            </radialGradient>
-          ))}
         </defs>
 
         <path ref={haloPathRef} fill="#ffffff" filter="url(#blob-ambient-halo)" />
 
         <path ref={corePathRef} />
 
-        <g ref={meshGroupRef} clipPath="url(#blob-mesh-clip)" style={{ mixBlendMode: "screen" }}>
-          {SPECULAR_PALETTE.map((_, i) => (
-            <circle
-              key={i}
-              ref={(el) => {
-                meshCircleRefs.current[i] = el;
-              }}
-              cx={CANVAS_CENTER}
-              cy={CANVAS_CENTER}
-              r={55}
-              fill={`url(#specular-patch-${i})`}
-            />
-          ))}
-        </g>
-
-        {/* --- replace the old <image> block with this --- */}
         {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
           <svg
-            x={keyImageRef.current.x}
-            y={keyImageRef.current.y}
+            x={keyImageRef.current.x + LOGO_OFFSET_X}
+            y={keyImageRef.current.y + LOGO_OFFSET_Y}
             width={keyImageRef.current.width}
             height={keyImageRef.current.height}
             viewBox={detailViewBox}
@@ -696,8 +607,8 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             <image
               ref={logoImageRef}
               href={keyImageRef.current.href}
-              x={keyImageRef.current.x}
-              y={keyImageRef.current.y}
+              x={keyImageRef.current.x + LOGO_OFFSET_X}
+              y={keyImageRef.current.y + LOGO_OFFSET_Y}
               width={keyImageRef.current.width}
               height={keyImageRef.current.height}
               filter="url(#logo-glow-filter)"
