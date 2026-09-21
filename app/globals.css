@@ -23,6 +23,24 @@
      Override on mobile later to move blob + key into a top-half region. */
   --blob-stage-offset-x: 0px;
   --blob-stage-offset-y: 0px;
+
+  /* Resolved blob size — single source of truth for the blob SVG box AND the
+     key hit-area (which sizes itself as a % of this box so it always sits on
+     the key). Mirrors the old w-[380px]/sm:w-[520px]/md:w-[680px] classes at
+     Tailwind's 640px/768px breakpoints, so the rendered size is identical. */
+  --blob-size: 380px;
+}
+
+@media (min-width: 640px) {
+  :root {
+    --blob-size: 520px;
+  }
+}
+
+@media (min-width: 768px) {
+  :root {
+    --blob-size: 680px;
+  }
 }
 
 @theme inline {

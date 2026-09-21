@@ -547,7 +547,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     <motion.svg
       ref={svgRef}
       viewBox="0 0 200 200"
-      className="w-[380px] h-[380px] sm:w-[520px] sm:h-[520px] md:w-[680px] md:h-[680px] pointer-events-none"
+      className="w-[var(--blob-size)] h-[var(--blob-size)] pointer-events-none"
       style={{
         rotateX: springRotateX,
         rotateY: springRotateY,

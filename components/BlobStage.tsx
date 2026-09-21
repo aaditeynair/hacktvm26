@@ -12,8 +12,11 @@ import type { CSSProperties, ReactNode } from "react";
  * later without touching the children. A `style`/`className` prop can override
  * anything per-instance.
  *
- * Desktop behaviour reproduces the previous BlobMorph wrapper exactly:
- * fixed, inset-0, z-10, flex-centered, pointer-events pass-through.
+ * Children are STACKED in a single centered grid cell — NOT laid out side by
+ * side (a flex row used to push the blob left and the key hit-area right).
+ * Every child (`BlobMorph`'s svg, `KeyHitArea`'s overlay box) occupies the
+ * same 1/1 cell and is centered via `place-items-center`, so they always
+ * overlap exactly regardless of their individual sizes.
  */
 interface BlobStageProps {
   className?: string;
@@ -24,7 +27,7 @@ interface BlobStageProps {
 export function BlobStage({ className = "", style, children }: BlobStageProps) {
   return (
     <div
-      className={`fixed inset-0 z-10 flex items-center justify-center pointer-events-none ${className}`}
+      className={`fixed inset-0 z-10 pointer-events-none grid place-items-center [&>*]:[grid-area:1/1] ${className}`}
       style={{
         transform:
           "translate(var(--blob-stage-offset-x), var(--blob-stage-offset-y))",

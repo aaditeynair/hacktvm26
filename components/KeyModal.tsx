@@ -187,19 +187,17 @@ export function KeyModal() {
               aria-modal="true"
               aria-labelledby="key-modal-title"
               className={[
-                "pointer-events-auto relative",
-                "w-full max-h-[92dvh] overflow-y-auto overscroll-contain",
-                "sm:w-auto sm:max-w-xl",
+                "pointer-events-auto relative flex flex-col overflow-hidden",
+                "h-svh w-full sm:h-[min(86dvh,760px)] sm:w-[min(92vw,1100px)]",
                 "rounded-t-3xl sm:rounded-3xl",
                 "border border-white/10 bg-black",
-                "px-6 pt-6 pb-[max(1.75rem,env(safe-area-inset-bottom))]",
               ].join(" ")}
             >
               <button
                 type="button"
                 onClick={handleClose}
                 aria-label="Close registration details"
-                className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 text-cream transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
+                className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 text-cream transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
               >
                 <svg
                   width="16"
@@ -215,88 +213,109 @@ export function KeyModal() {
                 </svg>
               </button>
 
-              <h2
-                id="key-modal-title"
-                className="pr-14 font-mono text-xl font-bold text-cream"
-              >
-                {EVENT.fullName}
-              </h2>
-              <p className="mt-1 font-mono text-sm uppercase tracking-wide text-blue">
-                {EVENT.tagline}
-              </p>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                <div className="flex min-h-full flex-col justify-center px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-12 sm:px-10 sm:pb-8">
+                  <div className="grid grid-cols-1 gap-x-12 gap-y-10 md:grid-cols-2">
+                    {/* Left: heading, tagline, date, register, contact */}
+                    <div className="flex flex-col gap-5">
+                      <div>
+                        <h2
+                          id="key-modal-title"
+                          className="pr-14 font-mono text-2xl font-bold leading-tight text-cream sm:text-3xl"
+                        >
+                          {EVENT.fullName}
+                        </h2>
+                        <p className="mt-2 font-mono text-sm uppercase tracking-wide text-blue">
+                          {EVENT.tagline}
+                        </p>
+                      </div>
 
-              {/* Slot above the action buttons — swap for a countdown later. */}
-              <div className="mt-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-sm text-gray-light">
-                  {EVENT.eventLabel} · {EVENT.venue}
-                </p>
-              </div>
+                      {/* Slot above the action buttons — swap for a countdown later. */}
+                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                        <p className="text-sm text-gray-light">
+                          {EVENT.eventLabel} · {EVENT.venue}
+                        </p>
+                      </div>
 
-              <div className="mt-6 flex flex-col gap-3">
-                {EVENT.register.enabled ? (
-                  <a
-                    href={EVENT.register.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block w-full rounded-full bg-cream py-3 text-center font-mono text-sm font-bold text-black transition hover:opacity-90 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
-                  >
-                    {EVENT.register.label}
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    disabled
-                    className="block w-full cursor-not-allowed rounded-full bg-white/10 py-3 text-center font-mono text-sm font-bold text-gray-mid"
-                  >
-                    {EVENT.register.label}
-                  </button>
-                )}
+                      {EVENT.register.enabled ? (
+                        <a
+                          href={EVENT.register.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 block w-full rounded-full bg-cream py-3 text-center font-mono text-sm font-bold text-black transition hover:opacity-90 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream sm:w-fit sm:px-10"
+                        >
+                          {EVENT.register.label}
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          className="mt-1 block w-full cursor-not-allowed rounded-full bg-white/10 py-3 text-center font-mono text-sm font-bold text-gray-mid sm:w-fit sm:px-10"
+                        >
+                          {EVENT.register.label}
+                        </button>
+                      )}
 
-                <a
-                  href={EVENT.brochure.path}
-                  download
-                  className="block w-full rounded-full border border-white/20 py-3 text-center font-mono text-sm font-semibold text-cream transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
-                >
-                  {EVENT.brochure.label}
-                </a>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-light">
+                        <a
+                          href={`mailto:${EVENT.contact.email}`}
+                          className="hover:text-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
+                        >
+                          {EVENT.contact.email}
+                        </a>
+                        {EVENT.contact.socials.map((s) => (
+                          <a
+                            key={s.label}
+                            href={s.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-gray-mid hover:text-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
+                          >
+                            {s.label}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
 
-                <span className="relative block w-full">
-                  <button
-                    type="button"
-                    disabled
-                    className="block w-full cursor-not-allowed rounded-full border border-white/10 py-3 text-center font-mono text-sm font-semibold text-gray-dim"
-                  >
-                    {EVENT.hackbook.label}
-                  </button>
-                  <span className="pointer-events-none absolute right-5 top-1/2 -translate-y-1/2 font-mono text-xs text-gray-mid">
-                    {EVENT.hackbook.comingLabel}
-                  </span>
-                </span>
-              </div>
-
-              <div className="mt-8 border-t border-white/10 pt-5">
-                <p className="font-mono text-xs uppercase tracking-[0.2em] text-gray-mid">
-                  Contact
-                </p>
-                <div className="mt-3 space-y-2 text-sm text-gray-light">
-                  <a
-                    href={`mailto:${EVENT.contact.email}`}
-                    className="block hover:text-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
-                  >
-                    {EVENT.contact.email}
-                  </a>
-                  <div className="flex flex-wrap gap-x-4 gap-y-2">
-                    {EVENT.contact.socials.map((s) => (
+                    {/* Right: downloads (brochure, hackbook) */}
+                    <div className="flex flex-col gap-4">
+                      <p className="font-mono text-xs uppercase tracking-[0.2em] text-gray-mid">
+                        Downloads
+                      </p>
                       <a
-                        key={s.label}
-                        href={s.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="hover:text-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
+                        href={EVENT.brochure.path}
+                        download
+                        className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-white/15 bg-white/5 px-5 py-4 transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
                       >
-                        {s.label}
+                        <span className="font-mono text-sm font-semibold text-cream">
+                          {EVENT.brochure.label}
+                        </span>
+                        <span className="flex items-center gap-1.5 font-mono text-xs uppercase tracking-[0.15em] text-gray-mid transition group-hover:text-cream">
+                          PDF
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M8 2v9M4 7l4 4 4-4M2 13h12" />
+                          </svg>
+                        </span>
                       </a>
-                    ))}
+                      <span className="relative flex w-full items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
+                        <span className="font-mono text-sm font-semibold text-gray-dim">
+                          {EVENT.hackbook.label}
+                        </span>
+                        <span className="rounded-full border border-white/15 px-2.5 py-1 font-mono text-xs uppercase tracking-[0.15em] text-gray-mid">
+                          {EVENT.hackbook.comingLabel}
+                        </span>
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
