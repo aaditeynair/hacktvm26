@@ -37,11 +37,22 @@ interface AppState {
   hasOpenedModal: boolean;
   setHasOpenedModal: (v: boolean) => void;
 
+  modalOrigin: ModalOrigin | null;
+  setModalOrigin: (o: ModalOrigin | null) => void;
+
   isReducedMotion: boolean;
   isTouchDevice: boolean;
 
   isLoading: boolean;
   setIsLoading: (v: boolean) => void;
+}
+
+/* ---------- Modal origin (in viewport px) ---------- */
+export interface ModalOrigin {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /* ---------- Context ---------- */
@@ -53,6 +64,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [hasUnlocked, setHasUnlocked] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [hasOpenedModal, setHasOpenedModal] = useState(false);
+  const [modalOrigin, setModalOrigin] = useState<ModalOrigin | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const isReducedMotion = useReducedMotion();
@@ -68,6 +80,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setIsModalOpen,
       hasOpenedModal,
       setHasOpenedModal,
+      modalOrigin,
+      setModalOrigin,
       isReducedMotion,
       isTouchDevice,
       isLoading,
@@ -78,6 +92,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       hasUnlocked,
       isModalOpen,
       hasOpenedModal,
+      modalOrigin,
       isReducedMotion,
       isTouchDevice,
       isLoading,

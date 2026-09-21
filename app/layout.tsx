@@ -4,6 +4,7 @@ import { AppProvider } from "@/context/AppContext";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { LoadingScreen } from "@/components/LoadingScreen";
+import { KeyModal } from "@/components/KeyModal";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Header />
           <LoadingScreen />
           {children}
+          <KeyModal />
           <Footer />
         </AppProvider>
       </body>

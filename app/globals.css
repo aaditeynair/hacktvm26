@@ -18,6 +18,11 @@
 
   /* Grain overlay opacity */
   --grain-opacity: 0.05;
+
+  /* Shared blob stage offset. Desktop: dead center (0, 0).
+     Override on mobile later to move blob + key into a top-half region. */
+  --blob-stage-offset-x: 0px;
+  --blob-stage-offset-y: 0px;
 }
 
 @theme inline {

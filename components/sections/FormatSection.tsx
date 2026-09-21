@@ -34,6 +34,7 @@ export function FormatSection() {
 
         {/* Right rail — full, vertically centred */}
         <div className="absolute right-5 top-1/2 -translate-y-1/2 sm:right-8 md:right-[6%] w-full max-w-md font-mono uppercase tracking-wide space-y-4">
+          {/* TODO(dates): registration was extended — update this row when new dates are final */}
           <div className="grid grid-cols-3 w-full">
             <p className="text-left">Registrations</p>
             <p className="text-center">—</p>
@@ -42,8 +43,9 @@ export function FormatSection() {
           <div className="grid grid-cols-3 w-full items-center">
             <p className="text-left">Orientation on Screening</p>
             <p className="text-center">—</p>
-            <p className="text-right">Sep 20</p>
+            <p className="text-right">Sep 23</p>
           </div>
+          {/* TODO(dates): screening dates may have shifted — confirm before publishing */}
           <div className="grid grid-cols-3 w-full">
             <p className="text-left">Screening</p>
             <p className="text-center">—</p>

@@ -117,7 +117,7 @@ function generateFallbackRadii(n: number): Float32Array {
 // --- phase timing -------------------------------------------------------
 const FLUID_HOLD_PROGRESS = 0.62;  // outline starts pulling toward the key shape
 const SHAPE_LOCK_PROGRESS = 0.92;  // fully settled — permanent black key silhouette from here
-const KEY_RIGID_PROGRESS = 0.97;   // detail fully visible, tilt interaction turns on
+export const KEY_RIGID_PROGRESS = 0.97;   // detail fully visible, tilt interaction turns on
 
 function computeFluidity(p: number): number {
   if (p <= FLUID_HOLD_PROGRESS) {
@@ -544,18 +544,17 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   }, [tiltCursorX, tiltCursorY]);
 
   return (
-    <motion.div className="fixed inset-0 z-10 flex items-center justify-center pointer-events-none">
-      <motion.svg
-        ref={svgRef}
-        viewBox="0 0 200 200"
-        className="w-[380px] h-[380px] sm:w-[520px] sm:h-[520px] md:w-[680px] md:h-[680px] pointer-events-auto"
-        style={{
-          rotateX: springRotateX,
-          rotateY: springRotateY,
-          perspective: 600,
-          transformStyle: "preserve-3d",
-        }}
-      >
+    <motion.svg
+      ref={svgRef}
+      viewBox="0 0 200 200"
+      className="w-[380px] h-[380px] sm:w-[520px] sm:h-[520px] md:w-[680px] md:h-[680px] pointer-events-none"
+      style={{
+        rotateX: springRotateX,
+        rotateY: springRotateY,
+        perspective: 600,
+        transformStyle: "preserve-3d",
+      }}
+    >
         <defs>
           <filter id="blob-ambient-halo" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="12" />
@@ -618,6 +617,5 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           )
         )}
       </motion.svg>
-    </motion.div>
   );
 }
