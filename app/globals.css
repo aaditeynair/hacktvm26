@@ -225,9 +225,9 @@ body::after {
 }
 
 /* ---------- Flicker Animation ----------
-   Used by LoadingScreen for "everyone deserves a way" reveal.
-   Words flicker together like a neon sign warming up.
-   Delay is set via inline style on the component (1.5 s default).
+   Used by LoadingScreen (whole words) and KineticText (per-letter heading
+   reveal). Both render through .flicker-word; delays are set via inline
+   style on each element.
    -------------------------------------------------------------------------- */
 @keyframes flicker-in {
   0%   { opacity: 0; }

@@ -5,6 +5,7 @@
 "use client";
 
 import { SectionWrapper } from "@/components/SectionWrapper";
+import { KineticText } from "@/components/KineticText";
 
 export function FormatSection() {
   return (
@@ -13,7 +14,9 @@ export function FormatSection() {
         {/* Left rail — full, vertically centred */}
         <div className="absolute left-5 top-1/2 -translate-y-1/2 sm:left-8 md:left-[6%] max-w-md text-left">
           <div className="mb-4 ">
-            <h1 className="text-2xl font-bold font-mono">Event Format</h1>
+            <h1 className="text-2xl font-bold font-mono text-glow">
+              <KineticText text="Event Format" />
+            </h1>
           </div>
           <p className="text-gray-mid leading-7">
             Most hackathons end when the timer hits zero. We give you the funding and the runway to actually finish what you started.

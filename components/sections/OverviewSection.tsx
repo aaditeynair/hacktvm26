@@ -1,6 +1,7 @@
 "use client";
 
 import { SectionWrapper } from "@/components/SectionWrapper";
+import { KineticText } from "@/components/KineticText";
 
 export function OverviewSection() {
   return (
@@ -9,7 +10,9 @@ export function OverviewSection() {
         {/* Top-left slot */}
         <div className="absolute left-5 top-20 sm:left-8 md:left-[6%] md:top-[14%] max-w-md text-left md:text-left">
           <div className="mb-4 ">
-            <h1 className="text-2xl font-bold font-mono">HackTVM'26: Access Point</h1>
+            <h1 className="text-2xl font-bold font-mono text-glow">
+              <KineticText text="HackTVM'26: Access Point" />
+            </h1>
             <p className="py-1 font-mono uppercase tracking-wide text-sm">Everyone deserves a way in</p>
           </div>
           <p className="text-gray-mid leading-7">
@@ -19,7 +22,9 @@ export function OverviewSection() {
 
         {/* Bottom-right slot */}
         <div className="absolute right-20 bottom-0 sm:right-8 md:right-[6%] md:bottom-[16%] max-w-md ">
-          <h2 className="py-1 font-mono uppercase tracking-wide text-lg font-bold mb-2">Overview</h2>
+          <h2 className="py-1 font-mono uppercase tracking-wide text-lg font-bold mb-2 text-glow">
+            <KineticText text="Overview" baseDelay={2300} />
+          </h2>
           <ul className="text-gray-mid leading-7">
             <li><b>Date:</b> October 10, 2026</li>
             <li><b>Venue:</b> The School of the Good Shepherd</li>

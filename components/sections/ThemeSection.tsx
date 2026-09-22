@@ -5,6 +5,7 @@
 "use client";
 
 import { SectionWrapper } from "@/components/SectionWrapper";
+import { KineticText } from "@/components/KineticText";
 
 export function ThemeSection() {
   return (
@@ -13,7 +14,9 @@ export function ThemeSection() {
         {/* Full left rail — vertically centred */}
         <div className="absolute space-y-4 left-5 top-1/2 -translate-y-1/2 sm:left-8 md:left-[6%] max-w-md text-left">
           <div className="pb-2">
-            <h1 className="text-2xl font-bold font-mono">Access Point</h1>
+            <h1 className="text-2xl font-bold font-mono text-glow">
+              <KineticText text="Access Point" />
+            </h1>
           </div>
           <p className="leading-7">If a system or space stands between a person and their independence, it's broken. You're here to build the sledgehammer</p>
           <p className="text-gray-mid leading-7">
@@ -33,7 +36,9 @@ export function ThemeSection() {
 
         {/* Bottom-right slot */}
         <div className="absolute right-5 bottom-20 sm:right-8 md:right-[6%] md:bottom-[16%] max-w-md text-right">
-          <h2 className="py-1 font-mono uppercase tracking-wide text-lg font-bold mb-2">The Hackbook</h2>
+          <h2 className="py-1 font-mono uppercase tracking-wide text-lg font-bold mb-2 text-glow">
+            <KineticText text="The Hackbook" baseDelay={2300} />
+          </h2>
           <p className="text-gray-mid">
             Further specifics on the theme, along with research context and reference material will be released on <b>October 3rd</b> in the form of <b>The Hackbook</b>. It will provide additional context with recommended tools/APIs, judging criteria, etc.
           </p>

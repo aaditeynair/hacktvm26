@@ -5,6 +5,7 @@
 "use client";
 
 import { SectionWrapper } from "@/components/SectionWrapper";
+import { KineticText } from "@/components/KineticText";
 
 export function TimelineSection() {
   return (
@@ -13,7 +14,9 @@ export function TimelineSection() {
         <div className="absolute left-5 top-20 sm:left-8 md:left-[6%] md:top-[14%] max-w-md text-left md:text-left flex flex-col justify-between">
           <div>
             <div className="pb-6">
-              <h1 className="text-2xl font-bold font-mono">What You Can Win</h1>
+              <h1 className="text-2xl font-bold font-mono text-glow">
+                <KineticText text="What You Can Win" />
+              </h1>
             </div>
             <div className="mb-6">
               <h2 className="pb-1 font-mono uppercase tracking-wide">Top 5 Finalists</h2>
@@ -30,7 +33,9 @@ export function TimelineSection() {
           </div>
           <div className="mt-24">
             <div className="pb-4">
-              <h1 className="text-2xl font-bold font-mono">How We Judge</h1>
+              <h1 className="text-2xl font-bold font-mono text-glow">
+                <KineticText text="How We Judge" baseDelay={1500} />
+              </h1>
             </div>
             <ul className="list-disc pl-6 leading-7">
               <li><b>Concept & Vision:</b> Idea originality and a realistic roadmap to scale it</li>
@@ -43,7 +48,9 @@ export function TimelineSection() {
         {/* Right rail — Registration Details (centred) */}
         <div className="absolute right-5 top-1/2 -translate-y-1/2 sm:right-8 md:right-[6%] max-w-md">
           <div className="pb-6">
-            <h1 className="text-2xl font-bold font-mono">Registration Checklist</h1>
+            <h1 className="text-2xl font-bold font-mono text-glow">
+              <KineticText text="Registration Checklist" baseDelay={1100} />
+            </h1>
           </div>
           <div className="leading-7">
             <p className="pb-1">Before you hit submit, make sure your team has all of this sorted out:</p>
