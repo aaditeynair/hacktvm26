@@ -66,13 +66,10 @@ body {
 }
 
 /* ---------- Scroll-Snap Container ---------- */
-/* Desktop scroller. Proximity snap (not mandatory) so a fast scroll keeps
-   momentum and a slow scroll settles on the nearest section, without ever
-   pinning the viewport. Sections are 100vh snap points; see .snap-section. */
 .snap-container {
   height: 100vh;
   overflow-y: scroll;
-  scroll-snap-type: y proximity;
+  scroll-snap-type: y mandatory;
   overscroll-behavior-y: none;
 
   /* Hide scrollbar across all browsers */
@@ -150,14 +147,11 @@ body.nosnap .mobile-scroller {
 }
 
 /* ---------- Snap Sections ---------- */
-/* Desktop full-viewport snap points. scroll-snap-align: start keeps each
-   section a snap target; scroll-snap-stop: normal (not `always`) so a user
-   scrolling quickly never gets stuck on a section boundary. */
 .snap-section {
   min-height: 100vh;
   height: 100vh;
   scroll-snap-align: start;
-  scroll-snap-stop: normal;
+  scroll-snap-stop: always;
   position: relative;
 }
 
@@ -213,8 +207,12 @@ body::after {
     inset: 0; /* No need for oversized layer without jitter */
   }
 
-  /* Desktop snap is already proximity with normal snap-stop by default, so
-     only the mobile per-beat snap needs relaxing here. */
+  /* Relax scroll-snap so users can scroll freely */
+  .snap-container {
+    scroll-snap-type: y proximity;
+  }
+
+  /* Same relaxation for the mobile per-beat snap */
   .mobile-scroller {
     scroll-snap-type: y proximity;
   }

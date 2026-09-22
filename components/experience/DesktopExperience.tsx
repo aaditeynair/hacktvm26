@@ -45,7 +45,7 @@ export function DesktopExperience() {
       <div
         ref={containerRef}
         id="scroll-container"
-        className="snap-container relative h-screen overflow-y-auto snap-y snap-proximity"
+        className="snap-container relative h-screen overflow-y-auto snap-y snap-mandatory"
       >
         <OverviewSection />
         <ThemeSection />
