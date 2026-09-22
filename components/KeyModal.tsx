@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useApp } from "@/context/AppContext";
 import { EVENT } from "@/lib/event";
 import { KEY_HIT_AREA_ID } from "@/components/KeyHitArea";
+import { Magnetic } from "@/components/Magnetic";
 
 /**
  * HackTVM'26 — Access Point
@@ -193,25 +194,33 @@ export function KeyModal() {
                 "border border-white/10 bg-black",
               ].join(" ")}
             >
-              <button
-                type="button"
-                onClick={handleClose}
-                aria-label="Close registration details"
-                className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 text-cream transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
+              <Magnetic
+                className="absolute right-4 top-4 z-10"
+                pull={4}
+                glow={14}
+                radius={80}
+                borderRadius="9999px"
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  aria-hidden="true"
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  aria-label="Close registration details"
+                  className="glow-press flex h-11 w-11 items-center justify-center rounded-full border border-white/15 text-cream transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
                 >
-                  <path d="M3 3l10 10M13 3L3 13" />
-                </svg>
-              </button>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 3l10 10M13 3L3 13" />
+                  </svg>
+                </button>
+              </Magnetic>
 
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 <div className="flex min-h-full flex-col justify-center px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-12 sm:px-10 sm:pb-8">
@@ -238,14 +247,22 @@ export function KeyModal() {
                       </div>
 
                       {EVENT.register.enabled ? (
-                        <a
-                          href={EVENT.register.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-1 block w-full rounded-full bg-cream py-3 text-center font-mono text-sm font-bold text-black transition hover:opacity-90 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream sm:w-fit sm:px-10"
+                        <Magnetic
+                          className="mt-1 block w-full sm:w-fit"
+                          pull={6}
+                          glow={18}
+                          radius={90}
+                          borderRadius="9999px"
                         >
-                          {EVENT.register.label}
-                        </a>
+                          <a
+                            href={EVENT.register.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="glow-press block w-full rounded-full bg-cream py-3 text-center font-mono text-sm font-bold text-black transition hover:opacity-90 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream sm:px-10"
+                          >
+                            {EVENT.register.label}
+                          </a>
+                        </Magnetic>
                       ) : (
                         <button
                           type="button"
@@ -282,31 +299,39 @@ export function KeyModal() {
                       <p className="font-mono text-xs uppercase tracking-[0.2em] text-gray-mid">
                         Downloads
                       </p>
-                      <a
-                        href={EVENT.brochure.path}
-                        download
-                        className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-white/15 bg-white/5 px-5 py-4 transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
+                      <Magnetic
+                        className="block w-full"
+                        pull={6}
+                        glow={16}
+                        radius={110}
+                        borderRadius="16px"
                       >
-                        <span className="font-mono text-sm font-semibold text-cream">
-                          {EVENT.brochure.label}
-                        </span>
-                        <span className="flex items-center gap-1.5 font-mono text-xs uppercase tracking-[0.15em] text-gray-mid transition group-hover:text-cream">
-                          PDF
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
-                          >
-                            <path d="M8 2v9M4 7l4 4 4-4M2 13h12" />
-                          </svg>
-                        </span>
-                      </a>
+                        <a
+                          href={EVENT.brochure.path}
+                          download
+                          className="glow-press group flex w-full items-center justify-between gap-4 rounded-2xl border border-white/15 bg-white/5 px-5 py-4 transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cream"
+                        >
+                          <span className="font-mono text-sm font-semibold text-cream">
+                            {EVENT.brochure.label}
+                          </span>
+                          <span className="flex items-center gap-1.5 font-mono text-xs uppercase tracking-[0.15em] text-gray-mid transition group-hover:text-cream">
+                            PDF
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M8 2v9M4 7l4 4 4-4M2 13h12" />
+                            </svg>
+                          </span>
+                        </a>
+                      </Magnetic>
                       <span className="relative flex w-full items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
                         <span className="font-mono text-sm font-semibold text-gray-dim">
                           {EVENT.hackbook.label}

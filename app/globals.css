@@ -285,6 +285,23 @@ body::after {
   -webkit-backdrop-filter: blur(12px);
 }
 
+/* ---------- Press Glow (touch feedback) ----------
+   Tap feedback for interactive elements on touch devices: no movement, just a
+   soft glow that fades on release. Desktop proximity glow is handled by
+   Magnetic; this only ever shows :active. The box-shadow changes take part in
+   each element's existing `transition` (which already covers box-shadow), so
+   no transition is declared here.
+   -------------------------------------------------------------------------- */
+.glow-press {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.glow-press:active {
+  box-shadow:
+    0 0 18px rgba(233, 228, 201, 0.28),
+    0 0 42px rgba(92, 111, 199, 0.18);
+}
+
 /* ---------- Screen Reader Only ---------- */
 .sr-only {
   position: absolute;

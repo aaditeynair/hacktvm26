@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { useApp } from "@/context/AppContext";
-import { KEY_RIGID_PROGRESS } from "@/components/BlobMorph";
+import { KEY_RIGID_PROGRESS, KEY_VISUAL_ID } from "@/components/BlobMorph";
 
 /**
  * HackTVM'26 — Access Point
@@ -12,8 +12,8 @@ import { KEY_RIGID_PROGRESS } from "@/components/BlobMorph";
  * blob does. Stays fully inert (no pointer events, not focusable, hidden
  * from AT) until the blob has fully resolved: activeSection is The Key AND
  * scroll progress has reached KEY_RIGID_PROGRESS. Once active it shows a
- * hint ("Tap/Click the key") and, on click, captures its on-screen rect and
- * opens the key modal from that origin.
+ * hint ("Tap/Click the key") and, on click, pushes the visible key logo down
+ * to ~90%, lets it spring back, then opens the key modal from its rect.
  */
 
 export const KEY_HIT_AREA_ID = "key-hit-area";
@@ -38,13 +38,51 @@ interface KeyHitAreaProps {
   progress: number;
 }
 
+/** Three-stage mechanical click: drop, sit at the bottom, then click-pop back
+    with a pronounced overshoot — a deliberate clunky feel rather than a
+    smooth spring. */
+const LOGO_PRESS_MS = 100; //  → scale(0.9), quick sharp drop
+const LOGO_DWELL_MS = 200; //   hold at the bottom (mechanism "sits")
+const LOGO_RELEASE_MS = 340; // → scale(1), same speed, no overshoot
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export function KeyHitArea({ progress }: KeyHitAreaProps) {
-  const { activeSection, isTouchDevice, setIsModalOpen, setModalOrigin } = useApp();
+  const {
+    activeSection,
+    isTouchDevice,
+    isReducedMotion,
+    setIsModalOpen,
+    setModalOrigin,
+  } = useApp();
 
   const isActive = activeSection === 4 && progress >= KEY_RIGID_PROGRESS;
 
+  /* Shrink the visible key logo to ~90%, let it spring back, then return so
+     the modal opens only after the click-push reads complete. Reduced motion
+     skips straight past. */
+  const pressKey = useCallback(async () => {
+    if (isReducedMotion) return;
+    const el = document.getElementById(KEY_VISUAL_ID);
+    if (!el) return;
+
+    el.style.transition = `transform ${LOGO_PRESS_MS}ms ease-out`;
+    el.style.transform = "scale(0.9)";
+    await delay(LOGO_PRESS_MS);
+
+    await delay(LOGO_DWELL_MS);
+
+    el.style.transition = `transform ${LOGO_RELEASE_MS}ms cubic-bezier(0.25, 0, 0.2, 1)`;
+    el.style.transform = "scale(1)";
+    await delay(LOGO_RELEASE_MS);
+  }, [isReducedMotion]);
+
   const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>) => {
+    async (e: React.MouseEvent<HTMLButtonElement>) => {
+      /* Capture the rect BEFORE the push so the modal grows from the key's
+         rest position, not the shrunk frame. */
       const rect = e.currentTarget.getBoundingClientRect();
       setModalOrigin({
         x: rect.left + rect.width / 2,
@@ -52,9 +90,10 @@ export function KeyHitArea({ progress }: KeyHitAreaProps) {
         width: rect.width,
         height: rect.height,
       });
+      await pressKey();
       setIsModalOpen(true);
     },
-    [setModalOrigin, setIsModalOpen],
+    [pressKey, setModalOrigin, setIsModalOpen],
   );
 
   return (

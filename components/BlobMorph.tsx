@@ -119,6 +119,11 @@ const FLUID_HOLD_PROGRESS = 0.62;  // outline starts pulling toward the key shap
 const SHAPE_LOCK_PROGRESS = 0.92;  // fully settled — permanent black key silhouette from here
 export const KEY_RIGID_PROGRESS = 0.97;   // detail fully visible, tilt interaction turns on
 
+/* Hit by KeyHitArea's click-push: the resolved key logo gets an id + a
+   fill-box transform anchor so its scale can be animated around its own
+   center. Markup/style only — never physics. */
+export const KEY_VISUAL_ID = "key-visual";
+
 function computeFluidity(p: number): number {
   if (p <= FLUID_HOLD_PROGRESS) {
     return 1 - 0.2 * (p / FLUID_HOLD_PROGRESS);
@@ -578,6 +583,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
         {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
           <svg
+            id={KEY_VISUAL_ID}
             x={keyImageRef.current.x + LOGO_OFFSET_X}
             y={keyImageRef.current.y + LOGO_OFFSET_Y}
             width={keyImageRef.current.width}
@@ -585,6 +591,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             viewBox={detailViewBox}
             filter="url(#logo-glow-filter)"
             preserveAspectRatio="xMidYMid meet"
+            style={{ transformBox: "fill-box", transformOrigin: "center" }}
           >
             {detailDefsMarkup && (
               <g dangerouslySetInnerHTML={{ __html: detailDefsMarkup }} />
@@ -604,6 +611,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         ) : (
           keyImageReady && keyImageRef.current && (
             <image
+              id={KEY_VISUAL_ID}
               ref={logoImageRef}
               href={keyImageRef.current.href}
               x={keyImageRef.current.x + LOGO_OFFSET_X}
@@ -611,7 +619,11 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
               width={keyImageRef.current.width}
               height={keyImageRef.current.height}
               filter="url(#logo-glow-filter)"
-              style={{ opacity: 0 }}
+              style={{
+                opacity: 0,
+                transformBox: "fill-box",
+                transformOrigin: "center",
+              }}
               preserveAspectRatio="xMidYMid meet"
             />
           )
