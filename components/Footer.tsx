@@ -2,11 +2,17 @@
  * HackTVM'26 — Access Point
  * Fixed footer with dot-based section navigation.
  *
- * Desktop (>= 768px): one dot per snap-section, scrolls via scrollIntoView
- * (unchanged behaviour).
- * Mobile (< 768px): one dot per phase (5 phases). Each is a 44px touch target;
- * the active dot shows a conic progress ring fed by phaseProgress. Tapping
- * scrolls the mobile scroller to the start of that phase.
+ * One shared SectionDots component renders the desktop-style dots on every
+ * breakpoint — laptop-style dots: a scaled, white active dot among dimmer
+ * inactive ones. Desktop and mobile differ only in what a tap does and in how
+ * the active dot paints:
+ *
+ *  - Desktop (>= 768px): one dot per snap-section; tapping scrolls the
+ *    snap-container via scrollIntoView. Active dot is solid white.
+ *  - Mobile (< 768px): one dot per phase; tapping scrolls the mobile scroller
+ *    to that phase's first spacer. The active dot instead shows a conic fill
+ *    of the phase's sub-progress (fed by phaseProgress), reusing the same dot
+ *    geometry and look.
  *
  * Each dot is a focusable <button> with an aria-label naming its section.
  * Arrow keys navigate between dots; Home/End jump to first/last.
@@ -18,27 +24,23 @@ import { motion } from "framer-motion";
 import { useApp } from "@/context/AppContext";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { SECTION_IDS, SECTION_LABELS, DURATIONS } from "@/lib/constants";
-import { PHASE_COUNT } from "@/lib/mobile-beats";
 
-/* ---------- Desktop dots (unchanged) ---------- */
-function DesktopFooterNav() {
-  const { activeSection, isReducedMotion } = useApp();
+/* ---------- Shared section dots ---------- */
+interface SectionDotsProps {
+  /** Scroll to a section/phase by index. Breakpoint-specific (see Footer). */
+  scrollTo: (index: number) => void;
+  /** Mobile-only: paint the active dot with the phase's sub-progress fill. */
+  showProgress?: boolean;
+}
+
+function SectionDots({ scrollTo, showProgress = false }: SectionDotsProps) {
+  const { activeSection, phaseProgress } = useApp();
   const navRef = useRef<HTMLElement>(null);
-
-  /* Scroll to a section by index */
-  const scrollTo = useCallback((index: number) => {
-    const id = SECTION_IDS[index];
-    if (!id) return;
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: isReducedMotion ? "auto" : "smooth" });
-    }
-  }, [isReducedMotion]);
+  const total = SECTION_IDS.length;
 
   /* Keyboard navigation between dots */
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent, index: number) => {
-      const total = SECTION_IDS.length;
       const buttons = navRef.current?.querySelectorAll<HTMLButtonElement>("button");
       if (!buttons) return;
 
@@ -71,7 +73,7 @@ function DesktopFooterNav() {
         buttons[next].focus();
       }
     },
-    [],
+    [total],
   );
 
   return (
@@ -96,10 +98,19 @@ function DesktopFooterNav() {
                   focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cream
                   ${
                     isActive
-                      ? "h-3 w-3 bg-white scale-125"
+                      ? "h-3 w-3 scale-125"
                       : "h-2 w-2 bg-white/30 hover:bg-white/60"
                   }
                 `}
+                style={
+                  isActive && showProgress
+                    ? {
+                        background: `conic-gradient(var(--color-white) ${Math.round(phaseProgress * 360)}deg, rgba(255,255,255,0.15) 0deg)`,
+                      }
+                    : isActive
+                      ? { background: "var(--color-white)" }
+                      : undefined
+                }
               />
             </li>
           );
@@ -109,13 +120,23 @@ function DesktopFooterNav() {
   );
 }
 
-/* ---------- Mobile phase dots ---------- */
-function MobileFooterNav() {
-  const { activeSection, phaseProgress, isReducedMotion } = useApp();
-  const navRef = useRef<HTMLElement>(null);
+export function Footer() {
+  const { isLoading, isReducedMotion } = useApp();
+  const isMobile = useIsMobile();
 
-  /* Scroll the mobile scroller to the start of a phase (its first spacer). */
-  const scrollPhaseTo = useCallback(
+  /* Desktop: scroll a snap-section into view by DOM id. */
+  const scrollSection = useCallback(
+    (index: number) => {
+      const id = SECTION_IDS[index];
+      if (!id) return;
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: isReducedMotion ? "auto" : "smooth" });
+    },
+    [isReducedMotion],
+  );
+
+  /* Mobile: scroll the full-screen scroller to the first spacer of a phase. */
+  const scrollPhase = useCallback(
     (index: number) => {
       const scroller = document.getElementById("scroll-container");
       if (!scroller) return;
@@ -131,91 +152,6 @@ function MobileFooterNav() {
     [isReducedMotion],
   );
 
-  /* Keyboard navigation between phase dots */
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent, index: number) => {
-      const total = PHASE_COUNT;
-      const buttons = navRef.current?.querySelectorAll<HTMLButtonElement>("button");
-      if (!buttons) return;
-
-      let next = -1;
-
-      switch (e.key) {
-        case "ArrowDown":
-        case "ArrowRight":
-          e.preventDefault();
-          next = (index + 1) % total;
-          break;
-        case "ArrowUp":
-        case "ArrowLeft":
-          e.preventDefault();
-          next = (index - 1 + total) % total;
-          break;
-        case "Home":
-          e.preventDefault();
-          next = 0;
-          break;
-        case "End":
-          e.preventDefault();
-          next = total - 1;
-          break;
-        default:
-          return;
-      }
-
-      if (next >= 0) {
-        buttons[next].focus();
-      }
-    },
-    [],
-  );
-
-  return (
-    <nav
-      ref={navRef}
-      aria-label="Section navigation"
-      className="pointer-events-auto"
-    >
-      <ul className="flex items-center gap-2 py-2" role="list">
-        {Array.from({ length: PHASE_COUNT }, (_, i) => {
-          const isActive = i === activeSection;
-          const id = SECTION_IDS[i];
-          return (
-            <li key={id}>
-              <button
-                type="button"
-                onClick={() => scrollPhaseTo(i)}
-                onKeyDown={(e) => handleKeyDown(e, i)}
-                aria-label={`Go to ${SECTION_LABELS[id]}`}
-                aria-current={isActive ? "true" : undefined}
-                className="relative flex h-11 w-11 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cream"
-                style={{
-                  background: isActive
-                    ? `conic-gradient(var(--color-cream) ${Math.round(phaseProgress * 360)}deg, rgba(255,255,255,0.18) 0deg)`
-                    : "rgba(255,255,255,0.18)",
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  className="absolute inset-[3px] rounded-full bg-black"
-                />
-                <span
-                  aria-hidden="true"
-                  className={`h-2 w-2 rounded-full ${isActive ? "bg-cream" : "bg-white/40"}`}
-                />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
-  );
-}
-
-export function Footer() {
-  const { isLoading, isReducedMotion } = useApp();
-  const isMobile = useIsMobile();
-
   return (
     <motion.footer
       className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-center pointer-events-none"
@@ -227,7 +163,10 @@ export function Footer() {
         delay: isReducedMotion ? 0 : 0.3,
       }}
     >
-      {isMobile ? <MobileFooterNav /> : <DesktopFooterNav />}
+      <SectionDots
+        scrollTo={isMobile ? scrollPhase : scrollSection}
+        showProgress={isMobile}
+      />
     </motion.footer>
   );
 }

@@ -103,8 +103,10 @@ body {
     pointer-events: none;
   }
 
-  /* Full-screen transparent scroller of invisible spacers. This is the ONLY
-     scroll container on mobile (no nested scroll, no horizontal scroll). */
+/* Full-screen transparent scroller of invisible spacers. This is the ONLY
+     scroll container on mobile (no nested scroll, no horizontal scroll).
+     scroll-snap-type makes each spacer a snap point so one gesture settles
+     on exactly one beat (one flick = one beat). */
   .mobile-scroller {
     position: absolute;
     inset: 0;
@@ -113,11 +115,20 @@ body {
     overflow-y: auto;
     overflow-x: hidden;
     overscroll-behavior-y: none;
+    scroll-snap-type: y mandatory;
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* IE/Edge */
   }
   .mobile-scroller::-webkit-scrollbar {
     display: none; /* Chrome/Safari */
+  }
+
+  /* Each spacer is a snap point. stop:always fought every programmatic
+     scroll (dot taps, restore) — it forced an overshoot to the NEXT port;
+     mandatory + plain start aligns to the nearest port, which is what real
+     finger flicks (with momentum) land on and what smooth scrolls end at. */
+  [data-mobile-spacer] {
+    scroll-snap-align: start;
   }
 }
 
@@ -184,6 +195,11 @@ body::after {
 
   /* Relax scroll-snap so users can scroll freely */
   .snap-container {
+    scroll-snap-type: y proximity;
+  }
+
+  /* Same relaxation for the mobile per-beat snap */
+  .mobile-scroller {
     scroll-snap-type: y proximity;
   }
 

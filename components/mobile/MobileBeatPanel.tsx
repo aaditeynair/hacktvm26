@@ -113,7 +113,7 @@ function renderContent(content: BeatContent) {
 
     case "note":
       return (
-        <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+        <div>
           <h2 className="font-mono text-lg font-bold text-cream">{content.title}</h2>
           <p className="mt-1.5 text-[15px] leading-[1.5] text-gray-light">
             {content.body}

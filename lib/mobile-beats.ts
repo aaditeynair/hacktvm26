@@ -60,30 +60,6 @@ export const BEATS: readonly Beat[] = [
       body: "Organized by the School of the Good Shepherd's HackTVM, HackTVM'26 is the Second Edition of Trivandrum's first and only inter-school hackathon. It gives student innovators a direct inroad to the tech industry by challenging them to build working technology that solves real-world challenges.",
     },
   },
-  {
-    id: "overview-facts",
-    phase: 0,
-    weight: 1,
-    content: {
-      kind: "facts",
-      facts: [
-        { label: "Date", value: EVENT.eventLabel },
-        { label: "Venue", value: EVENT.venue },
-        { label: "Eligibility", value: "Grades 8 to 12" },
-        { label: "Entry Fee", value: "₹1,200 per team (after screening)" },
-      ],
-    },
-  },
-  {
-    id: "opportunity",
-    phase: 0,
-    weight: 0.6,
-    content: {
-      kind: "statement",
-      title: "The Opportunity",
-      body: "₹10,000 development grant for finalist teams — plus tech internships and cash prizes for the top 3 winners.",
-    },
-  },
 
   /* ---- Phase 1 · Theme ---- */
   {
@@ -162,7 +138,7 @@ export const BEATS: readonly Beat[] = [
     },
   },
   {
-    id: "timeline-in",
+    id: "timeline",
     phase: 2,
     weight: 1,
     content: {
@@ -180,16 +156,6 @@ export const BEATS: readonly Beat[] = [
           label: "Screening",
           value: "TBD", // TODO(dates): screening dates may have shifted — confirm before publishing
         },
-      ],
-    },
-  },
-  {
-    id: "timeline-event",
-    phase: 2,
-    weight: 1,
-    content: {
-      kind: "facts",
-      facts: [
         {
           label: "Hackbook Release",
           value: EVENT.hackbook.releaseLabel,
@@ -206,7 +172,17 @@ export const BEATS: readonly Beat[] = [
     },
   },
 
-  /* ---- Phase 3 · Timeline & Registration ---- */
+  /* ---- Phase 3 · The Program ---- */
+  {
+    id: "opportunity",
+    phase: 3,
+    weight: 0.6,
+    content: {
+      kind: "statement",
+      title: "The Opportunity",
+      body: "₹10,000 development grant for finalist teams — plus tech internships and cash prizes for the top 3 winners.",
+    },
+  },
   {
     id: "prizes",
     phase: 3,
@@ -283,5 +259,8 @@ export const BEATS: readonly Beat[] = [
   },
 ];
 
-/** Number of dots shown in the mobile footer (one per phase). */
-export const PHASE_COUNT = 5;
+/** Number of phases on mobile — derived fresh from the beat list so a change
+    to the beat structure can never leave a stale count behind. The blob
+    boundary step (1 / (maxPhase - minPhase)) is likewise derived at runtime in
+    lib/mobile-progress.ts. */
+export const PHASE_COUNT = Math.max(...BEATS.map((b) => b.phase)) + 1;
