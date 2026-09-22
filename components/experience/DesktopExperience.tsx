@@ -11,6 +11,7 @@ import { BlobMorph } from "@/components/BlobMorph";
 import { BlobStage } from "@/components/BlobStage";
 import { KeyHitArea } from "@/components/KeyHitArea";
 import { useActiveSection } from "@/hooks/useActiveSection";
+import { useLatchedProgress } from "@/hooks/useLatchedProgress";
 import { OverviewSection } from "@/components/sections/OverviewSection";
 import { ThemeSection } from "@/components/sections/ThemeSection";
 import { FormatSection } from "@/components/sections/FormatSection";
@@ -21,6 +22,10 @@ export function DesktopExperience() {
   useActiveSection();
   const containerRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState(0);
+
+  // Key-resolution lock-in: after the key fully resolves once, it replaces the
+  // blob on every section (effective progress stays at 1).
+  const effectiveProgress = useLatchedProgress(progress);
 
   // Measure scroll progress inside the snap container (0.0 to 1.0)
   const { scrollYProgress } = useScroll({
@@ -37,8 +42,8 @@ export function DesktopExperience() {
       {/* Fixed Blob overlay receiving real-time scroll progress,
           plus the key hit-area for the resolved key photo. */}
       <BlobStage>
-        <BlobMorph progress={progress} />
-        <KeyHitArea progress={progress} />
+        <BlobMorph progress={effectiveProgress} />
+        <KeyHitArea progress={effectiveProgress} />
       </BlobStage>
 
       {/* Scroll-snap container with containerRef attached */}

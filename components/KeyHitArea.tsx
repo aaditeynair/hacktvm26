@@ -10,10 +10,12 @@ import { KEY_RIGID_PROGRESS, KEY_VISUAL_ID } from "@/components/BlobMorph";
  *
  * Rendered inside the shared BlobStage so it always sits exactly where the
  * blob does. Stays fully inert (no pointer events, not focusable, hidden
- * from AT) until the blob has fully resolved: activeSection is The Key AND
- * scroll progress has reached KEY_RIGID_PROGRESS. Once active it shows a
- * hint ("Tap/Click the key") and, on click, pushes the visible key logo down
- * to ~90%, lets it spring back, then opens the key modal from its rect.
+ * from AT) until the blob has fully resolved: on the first run that is only
+ * on the Key section (progress reaches KEY_RIGID_PROGRESS there); once the
+ * key has resolved it permanently replaces the blob on every section, so the
+ * hit area stays live and clickable everywhere. It shows a hint
+ * ("Tap/Click the key") when armed and, on click, pushes the visible key logo
+ * down to ~90%, lets it spring back, then opens the key modal from its rect.
  */
 
 export const KEY_HIT_AREA_ID = "key-hit-area";
@@ -51,14 +53,17 @@ function delay(ms: number): Promise<void> {
 
 export function KeyHitArea({ progress }: KeyHitAreaProps) {
   const {
-    activeSection,
     isTouchDevice,
     isReducedMotion,
     setIsModalOpen,
     setModalOrigin,
   } = useApp();
 
-  const isActive = activeSection === 4 && progress >= KEY_RIGID_PROGRESS;
+  /* Armed whenever the key is resolved. Pre-latch that only happens on the key
+     section (progress reaches KEY_RIGID_PROGRESS there and nowhere else); once
+     latched, the resolved key replaces the blob on every section, so the hit
+     area stays live everywhere. */
+  const isActive = progress >= KEY_RIGID_PROGRESS;
 
   /* Shrink the visible key logo to ~90%, let it spring back, then return so
      the modal opens only after the click-push reads complete. Reduced motion

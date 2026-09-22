@@ -28,6 +28,7 @@ import {
   type SpacerMetrics,
 } from "@/lib/mobile-progress";
 import { useApp } from "@/context/AppContext";
+import { useLatchedProgress } from "@/hooks/useLatchedProgress";
 
 const LAST_INDEX = BEATS.length - 1;
 
@@ -101,12 +102,16 @@ export function MobileExperience() {
 
   const activeBeat = BEATS[beatIndex];
 
+  /* Key-resolution lock-in: after the key fully resolves once, it replaces the
+     blob on every beat (effective progress stays at 1). */
+  const effectiveProgress = useLatchedProgress(blobProgress);
+
   return (
     <main className="relative h-svh w-full overflow-hidden bg-black text-white">
       {/* Top-half blob stage (positioned via .mobile-stage) */}
       <BlobStage className="mobile-stage">
-        <BlobMorph progress={blobProgress} />
-        <KeyHitArea progress={blobProgress} />
+        <BlobMorph progress={effectiveProgress} />
+        <KeyHitArea progress={effectiveProgress} />
       </BlobStage>
 
       {/* Bottom-half beat content (fixed; pointer-events pass through) */}
