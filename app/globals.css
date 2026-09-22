@@ -132,6 +132,15 @@ body {
   }
 }
 
+/* ---------- A/B Isolation: ?nosnap ----------
+   Dev-only flag (set from the URL in MobileExperience). Relaxes the mobile
+   per-beat snap from `mandatory` to `proximity` so the delayed-down-flick
+   report can be isolated: if the delay persists under proximity, mandatory
+   snap-holding is not the cause. */
+body.nosnap .mobile-scroller {
+  scroll-snap-type: y proximity;
+}
+
 /* ---------- Snap Sections ---------- */
 .snap-section {
   min-height: 100vh;

@@ -90,6 +90,15 @@ export function MobileExperience() {
     };
   }, [measure, sync]);
 
+  /* Dev-only A/B: `?nosnap` in the URL relaxes the mobile per-beat snap to
+     `proximity` (CSS on body.nosnap) so the down-flick delay report can be
+     isolated on-device. */
+  useEffect(() => {
+    const nosnap = new URLSearchParams(window.location.search).has("nosnap");
+    if (nosnap) document.body.classList.add("nosnap");
+    return () => document.body.classList.remove("nosnap");
+  }, []);
+
   const activeBeat = BEATS[beatIndex];
 
   return (
