@@ -30,6 +30,7 @@ export const EVENT = {
     path: null as string | null, // TODO: real hackbook file in /public when released
     label: "Download Hackbook",
     comingLabel: "Coming Oct 3",
+    releaseLabel: "Oct 3",
   },
 
   /* ---------- Key dates ---------- */
@@ -37,6 +38,17 @@ export const EVENT = {
     registration: null, // TODO(dates): registration was extended — new dates TBD
     orientation: "Sep 23",
     screening: null, // TODO(dates): may have shifted — confirm before publishing
+  },
+
+  /* ---------- Event phases ---------- */
+  phaseI: {
+    label: "Phase I",
+    dateLabel: "Oct 10",
+  },
+
+  phaseII: {
+    label: "Phase II",
+    dateLabel: "Oct 31",
   },
 
   /* ---------- Contact & socials (placeholders) ---------- */

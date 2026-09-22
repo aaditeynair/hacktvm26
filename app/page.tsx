@@ -1,52 +1,20 @@
+/**
+ * HackTVM'26 — Access Point
+ * Root page: renders the mobile experience below 768px and the desktop
+ * snap-scroll experience at >= 768px. Only one experience mounts at a time,
+ * so only one of them feeds activeSection / progress / phaseProgress.
+ *
+ * useIsMobile() starts as false (SSR-safe); the swap to the mobile tree is
+ * masked by the full-screen LoadingScreen in root layout.
+ */
 "use client";
-import { useRef, useState } from "react";
-import { useScroll, useMotionValueEvent } from "framer-motion";
-import { BlobMorph } from "@/components/BlobMorph";
-import { BlobStage } from "@/components/BlobStage";
-import { KeyHitArea } from "@/components/KeyHitArea";
-import { useActiveSection } from "@/hooks/useActiveSection";
-import { OverviewSection } from "@/components/sections/OverviewSection";
-import { ThemeSection } from "@/components/sections/ThemeSection";
-import { FormatSection } from "@/components/sections/FormatSection";
-import { TimelineSection } from "@/components/sections/TimelineSection";
-import { KeySection } from "@/components/sections/KeySection";
+
+import { useIsMobile } from "@/hooks/useMediaQuery";
+import { DesktopExperience } from "@/components/experience/DesktopExperience";
+import { MobileExperience } from "@/components/mobile/MobileExperience";
 
 export default function Home() {
-  useActiveSection();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [progress, setProgress] = useState(0);
+  const isMobile = useIsMobile();
 
-  // Measure scroll progress inside the snap container (0.0 to 1.0)
-  const { scrollYProgress } = useScroll({
-    container: containerRef,
-  });
-
-  // Feed scroll updates directly into progress state
-  useMotionValueEvent(scrollYProgress, "change", (latest) => {
-    setProgress(latest);
-  });
-
-  return (
-    <main className="relative h-screen w-full overflow-hidden bg-black text-white">
-      {/* Fixed Blob overlay receiving real-time scroll progress,
-          plus the key hit-area for the resolved key photo. */}
-      <BlobStage>
-        <BlobMorph progress={progress} />
-        <KeyHitArea progress={progress} />
-      </BlobStage>
-
-      {/* Scroll-snap container with containerRef attached */}
-      <div
-        ref={containerRef}
-        id="scroll-container"
-        className="snap-container relative h-screen overflow-y-auto snap-y snap-mandatory"
-      >
-        <OverviewSection />
-        <ThemeSection />
-        <FormatSection />
-        <TimelineSection />
-        <KeySection />
-      </div>
-    </main>
-  );
+  return isMobile ? <MobileExperience /> : <DesktopExperience />;
 }

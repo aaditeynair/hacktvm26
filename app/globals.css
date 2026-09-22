@@ -26,15 +26,10 @@
 
   /* Resolved blob size — single source of truth for the blob SVG box AND the
      key hit-area (which sizes itself as a % of this box so it always sits on
-     the key). Mirrors the old w-[380px]/sm:w-[520px]/md:w-[680px] classes at
-     Tailwind's 640px/768px breakpoints, so the rendered size is identical. */
-  --blob-size: 380px;
-}
-
-@media (min-width: 640px) {
-  :root {
-    --blob-size: 520px;
-  }
+     the key). Mobile (< 768px): sized by the viewport so it always fits the
+     top-half stage (min(78vw, 38dvh)). Desktop: fixed at 680px, matching the
+     old md:w-[680px] class, so the rendered size is identical. */
+  --blob-size: min(78vw, 38dvh);
 }
 
 @media (min-width: 768px) {
@@ -78,6 +73,52 @@ body {
 }
 .snap-container::-webkit-scrollbar {
   display: none; /* Chrome/Safari */
+}
+
+/* ---------- Mobile (< 768px) Layout ----------
+   The mobile experience reuses the desktop pieces — BlobStage, BlobMorph,
+   KeyHitArea (all sized off --blob-size) — but repositions the stage into the
+   top half of the viewport and renders beat content in a fixed bottom panel.
+   Desktop is untouched: these classes never apply at >= 768px.
+   -------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  /* Shift the BlobStage's centered grid into a top-half band:
+     top edge clears the fixed header, height is 48dvh (bottom half is the
+     beat panel). Children stay centered via place-items-center. */
+  .mobile-stage {
+    top: calc(env(safe-area-inset-top, 0px) + 3.5rem);
+    height: 48dvh;
+    bottom: auto;
+  }
+
+  /* Fixed bottom-half beat panel. pointer-events none lets touches fall
+     through to the scroller so dragging anywhere advances the blob. */
+  .mobile-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: calc(env(safe-area-inset-top, 0px) + 3.5rem + 48dvh);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 4.5rem);
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  /* Full-screen transparent scroller of invisible spacers. This is the ONLY
+     scroll container on mobile (no nested scroll, no horizontal scroll). */
+  .mobile-scroller {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+  }
+  .mobile-scroller::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
 }
 
 /* ---------- Snap Sections ---------- */

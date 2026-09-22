@@ -34,6 +34,11 @@ interface AppState {
   isModalOpen: boolean;
   setIsModalOpen: (v: boolean) => void;
 
+  /** Sub-progress (0..1) inside the active section/phase — drives the mobile
+   *  footer dots' progress ring. Fed by the mobile experience only. */
+  phaseProgress: number;
+  setPhaseProgress: (v: number) => void;
+
   hasOpenedModal: boolean;
   setHasOpenedModal: (v: boolean) => void;
 
@@ -63,6 +68,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeSection, setActiveSection] = useState(0);
   const [hasUnlocked, setHasUnlocked] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [phaseProgress, setPhaseProgress] = useState(0);
   const [hasOpenedModal, setHasOpenedModal] = useState(false);
   const [modalOrigin, setModalOrigin] = useState<ModalOrigin | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -78,6 +84,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setHasUnlocked,
       isModalOpen,
       setIsModalOpen,
+      phaseProgress,
+      setPhaseProgress,
       hasOpenedModal,
       setHasOpenedModal,
       modalOrigin,
@@ -91,6 +99,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       activeSection,
       hasUnlocked,
       isModalOpen,
+      phaseProgress,
       hasOpenedModal,
       modalOrigin,
       isReducedMotion,
