@@ -32,7 +32,7 @@ import { useApp } from "@/context/AppContext";
 const LAST_INDEX = BEATS.length - 1;
 
 export function MobileExperience() {
-  const { setActiveSection, setPhaseProgress } = useApp();
+  const { setActiveSection, setActiveBeat } = useApp();
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
@@ -58,12 +58,10 @@ export function MobileExperience() {
 
     if (!prev || prev.beatIndex !== state.beatIndex) {
       setBeatIndex(state.beatIndex);
+      setActiveBeat(state.beatIndex);
     }
     if (!prev || prev.phase !== state.phase) {
       setActiveSection(state.phase);
-    }
-    if (!prev || prev.sub !== state.sub) {
-      setPhaseProgress(state.sub);
     }
     if (!prev || prev.blobProgress !== state.blobProgress) {
       setBlobProgress(state.blobProgress);
@@ -71,7 +69,7 @@ export function MobileExperience() {
     if (el.scrollTop > 2) setHasScrolled(true);
 
     prevStateRef.current = state;
-  }, [setActiveSection, setPhaseProgress]);
+  }, [setActiveSection, setActiveBeat]);
 
   const handleScroll = useCallback(() => {
     if (rafRef.current) return;

@@ -4,6 +4,10 @@
  *
  * Provides:
  * - activeSection: which snap-section is currently visible (0-indexed)
+ * - activeBeat: index of the active beat in the mobile scroller (-1 on
+ *   desktop, where the mobility dots are unused). Fed from the same
+ *   beat-snap position tracking that drives the mobile scroll itself, so the
+ *   mobile footer dots and the visible beat never disagree.
  * - hasUnlocked: true after the user has opened and closed the key modal once
  * - isModalOpen / hasOpenedModal: modal state and first-open tracking
  * - isReducedMotion: system prefers-reduced-motion setting
@@ -28,16 +32,16 @@ interface AppState {
   activeSection: number;
   setActiveSection: (n: number) => void;
 
+  /** Active beat index in the mobile scroller; -1 when no mobile component
+   *  has claimed it (i.e. desktop). See MobileExperience sync(). */
+  activeBeat: number;
+  setActiveBeat: (n: number) => void;
+
   hasUnlocked: boolean;
   setHasUnlocked: (v: boolean) => void;
 
   isModalOpen: boolean;
   setIsModalOpen: (v: boolean) => void;
-
-  /** Sub-progress (0..1) inside the active section/phase — drives the mobile
-   *  footer dots' progress ring. Fed by the mobile experience only. */
-  phaseProgress: number;
-  setPhaseProgress: (v: number) => void;
 
   hasOpenedModal: boolean;
   setHasOpenedModal: (v: boolean) => void;
@@ -66,9 +70,9 @@ const AppContext = createContext<AppState | null>(null);
 /* ---------- Provider ---------- */
 export function AppProvider({ children }: { children: ReactNode }) {
   const [activeSection, setActiveSection] = useState(0);
+  const [activeBeat, setActiveBeat] = useState(-1);
   const [hasUnlocked, setHasUnlocked] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [phaseProgress, setPhaseProgress] = useState(0);
   const [hasOpenedModal, setHasOpenedModal] = useState(false);
   const [modalOrigin, setModalOrigin] = useState<ModalOrigin | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,12 +84,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => ({
       activeSection,
       setActiveSection,
+      activeBeat,
+      setActiveBeat,
       hasUnlocked,
       setHasUnlocked,
       isModalOpen,
       setIsModalOpen,
-      phaseProgress,
-      setPhaseProgress,
       hasOpenedModal,
       setHasOpenedModal,
       modalOrigin,
@@ -97,9 +101,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }),
     [
       activeSection,
+      activeBeat,
       hasUnlocked,
       isModalOpen,
-      phaseProgress,
       hasOpenedModal,
       modalOrigin,
       isReducedMotion,

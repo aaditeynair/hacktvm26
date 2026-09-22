@@ -1,20 +1,21 @@
 /**
  * HackTVM'26 — Access Point
- * Fixed footer with dot-based section navigation.
+ * Fixed footer with dot-based navigation.
  *
- * One shared SectionDots component renders the desktop-style dots on every
- * breakpoint — laptop-style dots: a scaled, white active dot among dimmer
- * inactive ones. Desktop and mobile differ only in what a tap does and in how
- * the active dot paints:
+ * - Desktop (>= 768px): one dot per snap-section (5 total), unchanged.
+ *   Tapping scrolls the snap-container via scrollIntoView; the active dot is
+ *   solid white and scaled. Keyboard: arrows move focus, Home/End jump.
+ * - Mobile (< 768px): one dot PER BEAT, derived from the live BEATS list
+ *   (never hardcoded). Tapping a dot scrolls the mobile scroller to that
+ *   beat's OWN snap position (computed the same way the per-beat scroll-snap
+ *   does — no phase boundaries involved), so taps land exactly on the beat
+ *   they name. The active dot is scaled up ~1.5x; all dots share the same
+ *   resting size (6px) and are spaced to fit 12 dots comfortably at 360px.
+ *   The active dot is driven by the same beat-snap tracking the mobile
+ *   scroller uses (activeBeat in AppContext), so it can never disagree with
+ *   the visible beat.
  *
- *  - Desktop (>= 768px): one dot per snap-section; tapping scrolls the
- *    snap-container via scrollIntoView. Active dot is solid white.
- *  - Mobile (< 768px): one dot per phase; tapping scrolls the mobile scroller
- *    to that phase's first spacer. The active dot instead shows a conic fill
- *    of the phase's sub-progress (fed by phaseProgress), reusing the same dot
- *    geometry and look.
- *
- * Each dot is a focusable <button> with an aria-label naming its section.
+ * Each dot is a focusable <button> with an aria-label naming its target.
  * Arrow keys navigate between dots; Home/End jump to first/last.
  */
 "use client";
@@ -24,17 +25,15 @@ import { motion } from "framer-motion";
 import { useApp } from "@/context/AppContext";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { SECTION_IDS, SECTION_LABELS, DURATIONS } from "@/lib/constants";
+import { BEATS } from "@/lib/mobile-beats";
 
-/* ---------- Shared section dots ---------- */
+/* ---------- Desktop section dots (unchanged) ---------- */
 interface SectionDotsProps {
-  /** Scroll to a section/phase by index. Breakpoint-specific (see Footer). */
   scrollTo: (index: number) => void;
-  /** Mobile-only: paint the active dot with the phase's sub-progress fill. */
-  showProgress?: boolean;
 }
 
-function SectionDots({ scrollTo, showProgress = false }: SectionDotsProps) {
-  const { activeSection, phaseProgress } = useApp();
+function SectionDots({ scrollTo }: SectionDotsProps) {
+  const { activeSection } = useApp();
   const navRef = useRef<HTMLElement>(null);
   const total = SECTION_IDS.length;
 
@@ -98,19 +97,10 @@ function SectionDots({ scrollTo, showProgress = false }: SectionDotsProps) {
                   focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cream
                   ${
                     isActive
-                      ? "h-3 w-3 scale-125"
+                      ? "h-3 w-3 bg-white scale-125"
                       : "h-2 w-2 bg-white/30 hover:bg-white/60"
                   }
                 `}
-                style={
-                  isActive && showProgress
-                    ? {
-                        background: `conic-gradient(var(--color-white) ${Math.round(phaseProgress * 360)}deg, rgba(255,255,255,0.15) 0deg)`,
-                      }
-                    : isActive
-                      ? { background: "var(--color-white)" }
-                      : undefined
-                }
               />
             </li>
           );
@@ -120,6 +110,106 @@ function SectionDots({ scrollTo, showProgress = false }: SectionDotsProps) {
   );
 }
 
+/* ---------- Mobile per-beat dots ---------- */
+function MobileBeatDots() {
+  const { activeBeat, isReducedMotion } = useApp();
+  const navRef = useRef<HTMLElement>(null);
+  const total = BEATS.length;
+
+  /* Scroll the scroller to a beat's own snap position. The position is
+     computed exactly like the per-beat scroll-snap's landing point (the
+     spacer's fractional top), so there is no phase-boundary math on this
+     path — taps always land on the exact beat they name. */
+  const scrollToBeat = useCallback(
+    (index: number) => {
+      const scroller = document.getElementById("scroll-container");
+      if (!scroller) return;
+      const spacer = scroller.querySelectorAll<HTMLElement>("[data-mobile-spacer]")[index];
+      if (!spacer) return;
+      const cRect = scroller.getBoundingClientRect();
+      const sRect = spacer.getBoundingClientRect();
+      const top = sRect.top - cRect.top + scroller.scrollTop;
+      scroller.scrollTo({
+        top,
+        behavior: isReducedMotion ? "auto" : "smooth",
+      });
+    },
+    [isReducedMotion],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent, index: number) => {
+      const buttons = navRef.current?.querySelectorAll<HTMLButtonElement>("button");
+      if (!buttons) return;
+
+      let next = -1;
+
+      switch (e.key) {
+        case "ArrowDown":
+        case "ArrowRight":
+          e.preventDefault();
+          next = (index + 1) % total;
+          break;
+        case "ArrowUp":
+        case "ArrowLeft":
+          e.preventDefault();
+          next = (index - 1 + total) % total;
+          break;
+        case "Home":
+          e.preventDefault();
+          next = 0;
+          break;
+        case "End":
+          e.preventDefault();
+          next = total - 1;
+          break;
+        default:
+          return;
+      }
+
+      if (next >= 0) {
+        buttons[next].focus();
+      }
+    },
+    [total],
+  );
+
+  return (
+    <nav
+      ref={navRef}
+      aria-label="Beat navigation"
+      className="pointer-events-auto"
+    >
+      <ul className="flex items-center gap-2.5 py-5" role="list">
+        {BEATS.map((beat, i) => {
+          const isActive = i === activeBeat;
+          return (
+            <li key={beat.id}>
+              <button
+                type="button"
+                onClick={() => scrollToBeat(i)}
+                onKeyDown={(e) => handleKeyDown(e, i)}
+                aria-label={`Go to ${beat.id}`}
+                aria-current={isActive ? "true" : undefined}
+                className={`
+                  block rounded-full transition-all duration-300 ease-out
+                  focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cream
+                  ${
+                    isActive
+                      ? "h-1.5 w-1.5 bg-white scale-150"
+                      : "h-1.5 w-1.5 bg-white/30 hover:bg-white/60"
+                  }
+                `}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+/* ---------- Footer ---------- */
 export function Footer() {
   const { isLoading, isReducedMotion } = useApp();
   const isMobile = useIsMobile();
@@ -135,23 +225,6 @@ export function Footer() {
     [isReducedMotion],
   );
 
-  /* Mobile: scroll the full-screen scroller to the first spacer of a phase. */
-  const scrollPhase = useCallback(
-    (index: number) => {
-      const scroller = document.getElementById("scroll-container");
-      if (!scroller) return;
-      const first = scroller.querySelector<HTMLElement>(
-        `[data-mobile-phase="${index}"]`,
-      );
-      if (!first) return;
-      scroller.scrollTo({
-        top: first.offsetTop,
-        behavior: isReducedMotion ? "auto" : "smooth",
-      });
-    },
-    [isReducedMotion],
-  );
-
   return (
     <motion.footer
       className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-center pointer-events-none"
@@ -163,10 +236,11 @@ export function Footer() {
         delay: isReducedMotion ? 0 : 0.3,
       }}
     >
-      <SectionDots
-        scrollTo={isMobile ? scrollPhase : scrollSection}
-        showProgress={isMobile}
-      />
+      {isMobile ? (
+        <MobileBeatDots />
+      ) : (
+        <SectionDots scrollTo={scrollSection} />
+      )}
     </motion.footer>
   );
 }
