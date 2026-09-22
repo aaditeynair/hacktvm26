@@ -30,6 +30,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="h-full bg-black text-white">
+        <div className="ambient-tint-layer" aria-hidden="true" />
         <AppProvider>
           <Header />
           <LoadingScreen />

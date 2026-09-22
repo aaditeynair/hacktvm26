@@ -2,6 +2,8 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
+import { useApp } from "@/context/AppContext";
+import { ambientColorForProgress, PHASE_COLORS } from "@/lib/theme";
 
 class SimplexNoise {
   private perm: number[] = [];
@@ -208,6 +210,18 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   }, [progress]);
 
   const smoothedProgressRef = useRef(0);
+
+  /* Cached ambient values so colors are only written when they actually
+     change (halo fill touches one element; the tint var touches the whole
+     document, so never spam it per frame). */
+  const lastHaloColorRef = useRef<string | null>(null);
+  const lastAmbientTintRef = useRef<string | null>(null);
+
+  const { isReducedMotion } = useApp();
+  const reducedMotionRef = useRef(isReducedMotion);
+  useEffect(() => {
+    reducedMotionRef.current = isReducedMotion;
+  }, [isReducedMotion]);
 
   const isKeyActive = progress >= KEY_RIGID_PROGRESS;
   const tiltCursorX = useMotionValue(0);
@@ -506,6 +520,22 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
       const detailReveal = computeDetailReveal(currentProgress);
 
+      /* Phase-linked ambient: same progress value as the morph. Reduced motion
+         snaps to the pure phase stop (no in-phase blend). Both writes are
+         cached so they only touch the DOM when the color actually changes. */
+      const ambient = ambientColorForProgress(
+        currentProgress,
+        reducedMotionRef.current,
+      );
+      if (haloPathRef.current && ambient.halo !== lastHaloColorRef.current) {
+        lastHaloColorRef.current = ambient.halo;
+        haloPathRef.current.style.fill = ambient.halo;
+      }
+      if (ambient.tint !== lastAmbientTintRef.current) {
+        lastAmbientTintRef.current = ambient.tint;
+        document.documentElement.style.setProperty("--ambient-tint", ambient.tint);
+      }
+
       if (glowBlurRef.current) {
         const currentBlur = 4 + 8 * (1 - detailReveal);
         glowBlurRef.current.setAttribute("stdDeviation", currentBlur.toFixed(2));
@@ -577,7 +607,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           </filter>
         </defs>
 
-        <path ref={haloPathRef} fill="#ffffff" filter="url(#blob-ambient-halo)" />
+        <path ref={haloPathRef} fill={PHASE_COLORS[0]} filter="url(#blob-ambient-halo)" />
 
         <path ref={corePathRef} />
 

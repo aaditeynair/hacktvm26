@@ -30,6 +30,11 @@
      top-half stage (min(78vw, 38dvh)). Desktop: fixed at 680px, matching the
      old md:w-[680px] class, so the rendered size is identical. */
   --blob-size: min(78vw, 38dvh);
+
+  /* Phase-linked ambient background tint. Overwritten every frame by
+     BlobMorph's tick (same progress as the blob morph). This initial value
+     matches Phase 0 so there's no flash before first paint/hydration. */
+  --ambient-tint: rgba(129, 183, 211, 0.14);
 }
 
 @media (min-width: 768px) {
@@ -276,6 +281,23 @@ body::after {
 .blob-glow {
   filter: drop-shadow(0 0 15px rgba(92, 111, 199, 0.4))
           drop-shadow(0 0 30px rgba(75, 46, 111, 0.3));
+}
+
+/* ---------- Phase Ambient Tint ----------
+   Fixed full-screen layer beneath all content (first child of <body>, z 0).
+   A soft radial pool of the phase's current tint color; the color is driven
+   by BlobMorph via --ambient-tint and is already alpha'd, so it never
+   threatens content contrast. */
+.ambient-tint-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    85% 85% at 50% 45%,
+    var(--ambient-tint, rgba(0, 0, 0, 0)) 0%,
+    rgba(0, 0, 0, 0) 72%
+  );
 }
 
 /* ---------- Modal Backdrop ---------- */

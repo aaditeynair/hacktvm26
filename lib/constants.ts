@@ -5,9 +5,10 @@
 
 /* ---------- Color Tokens ---------- */
 export const COLORS = {
-  purple: "#4B2E6F",
-  blue: "#5C6FC7",
-  cream: "#E9E4C9",
+  lightblue: "#81b7d3",
+  blue: "#4b7cd3",
+  violet: "#603db6",
+  purple: "#340a61",
   black: "#000000",
   white: "#ffffff",
   grayDim: "#444444",
