@@ -126,6 +126,38 @@ export const KEY_RIGID_PROGRESS = 0.97;   // detail fully visible, tilt interact
    center. Markup/style only — never physics. */
 export const KEY_VISUAL_ID = "key-visual";
 
+/* --- Blob mesh gradient (visual layer only) ------------------------------
+   A soft mesh-like color field clipped to the blob silhouette (via <use>
+   of the physics-written core path — no loop changes). It drifts slowly
+   while the blob is alive and settles toward a calm, near-static state as
+   the key resolves (arrival > restlessness). Color values are first-pass. */
+const MESH_SETTLE_START = 0.55;            // begin calming before shape lock
+const MESH_SETTLE_END = KEY_RIGID_PROGRESS; // fully calm once key is rigid
+
+const MESH_ALIVE = { baseHi: "#141414", baseLo: "#090909", blobA: "#343434", blobB: "#474747" };
+const MESH_CALM  = { baseHi: "#0A0A0A", baseLo: "#030303", blobA: "#1A1A1A", blobB: "#242424" };
+
+const MESH_AMP_AX = 7;   // first-blob drift amplitude (viewBox px)
+const MESH_AMP_AY = 5;
+const MESH_AMP_BX = 10;
+const MESH_AMP_BY = 8;
+const MESH_DUR_A = 11;   // drift periods in seconds (alive)
+const MESH_DUR_B = 7;
+
+function computeMeshSettle(p: number): number {
+  const t = Math.min(1, Math.max(0, (p - MESH_SETTLE_START) / (MESH_SETTLE_END - MESH_SETTLE_START)));
+  return t * t * (3 - 2 * t);
+}
+
+function mixHex(a: string, b: string, t: number): string {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const r = Math.round(((pa >> 16) & 255) + (((pb >> 16) & 255) - ((pa >> 16) & 255)) * t);
+  const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * t);
+  const bl = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * t);
+  return `rgb(${r}, ${g}, ${bl})`;
+}
+
 function computeFluidity(p: number): number {
   if (p <= FLUID_HOLD_PROGRESS) {
     return 1 - 0.2 * (p / FLUID_HOLD_PROGRESS);
@@ -578,6 +610,25 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     };
   }, [tiltCursorX, tiltCursorY]);
 
+  /* Mesh-gradient settle + drift values. Color/tempo read from `progress`
+     only; the drain drift is killed for reduced motion (static field).
+     Amplitudes are emitted through CSS vars so the running keyframe
+     animations slow/close in live as the key resolves. */
+  const meshSettle = computeMeshSettle(progress);
+  const meshScale = isReducedMotion ? 0 : 1 - meshSettle;
+  const meshBaseHi = mixHex(MESH_ALIVE.baseHi, MESH_CALM.baseHi, meshSettle);
+  const meshBaseLo = mixHex(MESH_ALIVE.baseLo, MESH_CALM.baseLo, meshSettle);
+  const meshColorA = mixHex(MESH_ALIVE.blobA, MESH_CALM.blobA, meshSettle);
+  const meshColorB = mixHex(MESH_ALIVE.blobB, MESH_CALM.blobB, meshSettle);
+  const meshVars = {
+    "--mesh-amp-ax": `${MESH_AMP_AX * meshScale}px`,
+    "--mesh-amp-ay": `${MESH_AMP_AY * meshScale}px`,
+    "--mesh-amp-bx": `${MESH_AMP_BX * meshScale}px`,
+    "--mesh-amp-by": `${MESH_AMP_BY * meshScale}px`,
+    "--mesh-dur-a": `${MESH_DUR_A + meshSettle * 30}s`,
+    "--mesh-dur-b": `${MESH_DUR_B + meshSettle * 24}s`,
+  } as React.CSSProperties;
+
   return (
     <motion.svg
       ref={svgRef}
@@ -605,11 +656,41 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+
+          {/* Blob mesh gradient: clipped to the physics-written core silhouette
+              via <use> (svg 1.1 allows it), so it always stays in sync with the
+              morph without a second path being written by the loop. */}
+          <clipPath id="blob-mesh-clip">
+            <use href="#blob-core-path" />
+          </clipPath>
+          <radialGradient id="mesh-base" cx="40%" cy="38%" r="75%">
+            <stop offset="0%" stopColor={meshBaseHi} stopOpacity="1" />
+            <stop offset="100%" stopColor={meshBaseLo} stopOpacity="1" />
+          </radialGradient>
+          <radialGradient id="mesh-blob-a" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={meshColorA} stopOpacity="0.5" />
+            <stop offset="62%" stopColor={meshColorA} stopOpacity="0.2" />
+            <stop offset="100%" stopColor={meshColorA} stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="mesh-blob-b" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={meshColorB} stopOpacity="0.34" />
+            <stop offset="70%" stopColor={meshColorB} stopOpacity="0.12" />
+            <stop offset="100%" stopColor={meshColorB} stopOpacity="0" />
+          </radialGradient>
         </defs>
 
         <path ref={haloPathRef} fill={PHASE_COLORS[0]} filter="url(#blob-ambient-halo)" />
 
-        <path ref={corePathRef} />
+        <path ref={corePathRef} id="blob-core-path" />
+
+        {/* Mesh field, drawn over (instead of) the flat black core, only where
+            the blob silhouette is. Drift is pure translate — compositor-only.
+            Grays are concentrated where the old blue/purple accents sat. */}
+        <g clipPath="url(#blob-mesh-clip)" style={meshVars}>
+          <rect width="200" height="200" fill="url(#mesh-base)" />
+          <circle className="mesh-drift mesh-drift-a" cx="72" cy="56" r="96" fill="url(#mesh-blob-a)" />
+          <circle className="mesh-drift mesh-drift-b" cx="132" cy="144" r="84" fill="url(#mesh-blob-b)" />
+        </g>
 
         {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
           <svg
