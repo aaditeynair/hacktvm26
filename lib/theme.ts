@@ -5,9 +5,9 @@
  * One color stop per scroll phase (0 = Overview → 4 = Key). The blob's halo
  * glow interpolates between adjacent stops as the SAME progress value that
  * already drives the blob morph crosses each phase band — no second progress
- * source anywhere. The light-ribbon background (components/LightRibbons.tsx)
- * reads the same progress and shifts its per-band opacities from the blue
- * side of this arc toward the violet/purple side as it resolves.
+ * source anywhere. The aurora background (components/AuroraBackground.tsx)
+ * shares the palette but is scroll-independent (identical on every section);
+ * the halo is the only phase-drifted surface.
  *
  * Arc: bright light-blue → saturated blue → soft indigo → violet → deep
  * purple. Monotonic bright → deep → dim, so ambient energy drains as the blob

@@ -17,7 +17,7 @@ import { ThemeSection } from "@/components/sections/ThemeSection";
 import { FormatSection } from "@/components/sections/FormatSection";
 import { TimelineSection } from "@/components/sections/TimelineSection";
 import { KeySection } from "@/components/sections/KeySection";
-import { LightRibbons } from "@/components/LightRibbons";
+import { AuroraBackground } from "@/components/AuroraBackground";
 
 export function DesktopExperience() {
   useActiveSection();
@@ -40,8 +40,8 @@ export function DesktopExperience() {
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
-      {/* Light-ribbon background — same latched progress as the blob. */}
-      <LightRibbons progress={effectiveProgress} />
+      {/* Aurora brand background — identical on every section. */}
+      <AuroraBackground />
 
       {/* Fixed Blob overlay receiving real-time scroll progress,
           plus the key hit-area for the resolved key photo. */}

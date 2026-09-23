@@ -30,6 +30,63 @@
      top-half stage (min(78vw, 38dvh)). Desktop: fixed at 680px, matching the
      old md:w-[680px] class, so the rendered size is identical. */
   --blob-size: min(78vw, 38dvh);
+
+  /* ---- Aurora background tunables ----
+     Colors are space-separated RGB triples so layers can build rgba stops.
+     Layer sizes are ellipse-layer box sizes (vmax). Durations are per-layer;
+     --aurora-speed-scale multiplies them all. --aurora-brightness scales every
+     layer's opacity (static, never animated). */
+  --aurora-lightblue-rgb: 129 183 211;
+  --aurora-blue-rgb: 75 124 211;
+  --aurora-violet-rgb: 96 61 182;
+  --aurora-purple-rgb: 52 10 97;
+  --aurora-deep-rgb: 20 6 43; /* near-black indigo #14062b */
+
+  --aurora-size-1: 260vmax;
+  --aurora-size-2: 185vmax;
+  --aurora-size-3: 175vmax;
+  --aurora-size-4: 165vmax;
+  --aurora-size-5: 150vmax;
+  --aurora-size-6: 300vmax;
+  --aurora-size-7: 340vmax;
+
+  --aurora-dur-1: 43s;
+  --aurora-dur-2: 41s;
+  --aurora-dur-3: 27s;
+  --aurora-dur-4: 37s;
+  --aurora-dur-5: 44s;
+  --aurora-dur-6: 36s;
+  --aurora-dur-7: 48s;
+
+  --aurora-travel-1: 12vmax;
+  --aurora-travel-2: 22vmax;
+  --aurora-travel-3: 14vmax;
+  --aurora-travel-4: 19vmax;
+  --aurora-travel-5: 12vmax;
+  --aurora-travel-6: 14vmax;
+  --aurora-travel-7: 11vmax;
+
+  /* Per-band diagonals for the three blue bloom bands (spread ~20deg) */
+  --aurora-streak-angle-1: -38deg;
+  --aurora-streak-angle-6: -28deg;
+  --aurora-streak-angle-7: -18deg;
+
+  --aurora-speed-scale: 1;
+  --aurora-brightness: 1;
+  --aurora-layer-op-1: 1;
+  --aurora-layer-op-2: 1;
+  --aurora-layer-op-3: 1;
+  --aurora-layer-op-4: 1;
+  --aurora-layer-op-5: 1;
+  --aurora-layer-op-6: 1;
+  --aurora-layer-op-7: 1;
+
+  /* Film grain: monochrome per-pixel PNG tile (public/noise-512.png) tiled at
+     1 CSS px per grain. Opacity + contrast come from the tile itself. */
+  --noise-opacity: 0.08;
+  --noise-tile-size: 512px;
+
+  --aurora-vignette: 0.3;
 }
 
 @media (min-width: 768px) {
@@ -278,73 +335,428 @@ body::after {
           drop-shadow(0 0 30px rgba(75, 46, 111, 0.3));
 }
 
-/* ---------- Light-Ribbon Background ----------
-   Replaces the old flat phase-tint layer. Fixed full-screen system behind all
-   content (first child of each experience's <main>, z 0). Near-black,
-   violet-tinted base; gradient bands (pure CSS radial-gradients — no SVG
-   filters, no filter:blur()) drift via transform-only keyframes driven by CSS
-   custom properties. Bands' opacity/brightness is set per frame by
-   components/LightRibbons.tsx from the SAME progress as the blob. A
-   center-dark vignette on top keeps the content zone readable while the
-   edges stay vivid. Film grain is the site's existing body::after overlay.
+/* ---------- Aurora Background ----------
+   Brand look (posters / social): large soft out-of-focus color fields —
+   luminous light-blue accent against vivid violet + blue sweeps, deep
+   near-black indigo pooling, over a static violet-tinted base. Fixed
+   full-screen system behind all content (first child of each experience's
+   <main>, z 0). Identical on every section; completely isolated from the
+   scroll/physics-driven blob (which keeps framerate priority).
    ------------------------------------------------------------------------- */
-.light-ribbons {
+.aurora {
   position: fixed;
   inset: 0;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background:
-    radial-gradient(75% 60% at 50% 16%, rgba(52, 10, 97, 0.32) 0%, rgba(52, 10, 97, 0.12) 45%, rgba(52, 10, 97, 0) 70%),
-    linear-gradient(168deg, #0b0917 0%, #130e25 48%, #0a0813 100%);
+  background: #110724; /* fallback so nothing ever shows through */
 }
 
-.light-ribbon {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 175vmax;
-  height: 175vmax;
-  margin-top: -87.5vmax;
-  margin-left: -87.5vmax;
-  pointer-events: none;
-  will-change: transform;
-  transform-origin: center;
-  animation: ribbon-drift var(--rib-dur, 30s) ease-in-out
-    var(--rib-delay, 0s) infinite alternate;
-}
-
-/* Bright core → color → dark base falloff built from gradient stops; the
-   drift is a slow independent rotate + translate sweep around each band's
-   base placement (transform/opacity only — no blur or filters). */
-@keyframes ribbon-drift {
-  from {
-    transform: rotate(calc(var(--rib-rot, 0deg) - 11deg))
-      translate(calc(var(--rib-sway, 0vmax) * -1), calc(var(--rib-swayy, 0vmax) * -1));
-  }
-  to {
-    transform: rotate(calc(var(--rib-rot, 0deg) + 11deg))
-      translate(var(--rib-sway, 0vmax), var(--rib-swayy, 0vmax));
-  }
-}
-
-/* Center-dark scrim — the primary readability mechanism. Darkest over the
-   content/blob zone, transparent near the edges so bands stay vivid. */
-.light-ribbon-vignette {
+.aurora-base {
   position: absolute;
   inset: 0;
-  background: radial-gradient(
-    60% 55% at 50% 46%,
-    rgba(3, 2, 8, 0.85) 0%,
-    rgba(3, 2, 8, 0.45) 48%,
-    rgba(3, 2, 8, 0) 78%
+  background: linear-gradient(
+    158deg,
+    #170a2a 0%,
+    #100621 32%,
+    #1b0d33 58%,
+    #0e0519 100%
   );
 }
 
-/* Reduced motion: bands hold their base placement (inline rotate), no drift.
-   Phase brightness shifts remain but jump instantly (render-driven). */
+/* Every layer is an oversized centered box holding one elongated elliptical
+   radial gradient. Long eased stop counts (bright core → transparent by
+   ~70-80%) mean no visible edges or ring artifacts at any point in the drift.
+   Only `transform` is animated; nothing reads scroll/progress. */
+.aurora-layer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* Layers 1/6/7 — the blue accent is three overlapping, soft bloom bands
+   instead of a single streak. They sit at slightly different diagonals
+   (-38/-28/-18deg), sizes and speeds, so where they overlap they merge into
+   a broad glow and no single band reads as a shape. Mostly palette blue
+   (#4b7cd3); light-blue appears only at low alpha in band 6's center. Peak
+   alphas are low and the falloff is long (8-10 eased stops, 0 by ~65%), so
+   the light feels like it blooms out of the violet rather than sitting on
+   top. Base rotation is baked into a static `transform` so reduced-motion
+   keeps each band's diagonal. Colors interpolate in oklab where supported,
+   with a plain rgb() fallback (first `background` line), to avoid gray/muddy
+   midpoint transitions. */
+.aurora-layer-1 {
+  width: var(--aurora-size-1, 260vmax);
+  height: var(--aurora-size-1, 260vmax);
+  margin-left: calc(var(--aurora-size-1, 260vmax) * -0.5);
+  margin-top: calc(var(--aurora-size-1, 260vmax) * -0.5);
+  opacity: calc(var(--aurora-layer-op-1, 1) * var(--aurora-brightness, 1));
+  transform: rotate(var(--aurora-streak-angle-1, -38deg));
+  background: radial-gradient(
+    52% 12% at 44% 42%,
+    rgb(var(--aurora-blue-rgb) / 0.18) 0%,
+    rgb(var(--aurora-blue-rgb) / 0.18) 5%,
+    rgb(var(--aurora-blue-rgb) / 0.15) 12%,
+    rgb(var(--aurora-blue-rgb) / 0.12) 22%,
+    rgb(var(--aurora-blue-rgb) / 0.095) 32%,
+    rgb(var(--aurora-blue-rgb) / 0.07) 43%,
+    rgb(var(--aurora-blue-rgb) / 0.045) 52%,
+    rgb(var(--aurora-blue-rgb) / 0.02) 60%,
+    transparent 65%
+  );
+  background: radial-gradient(
+    in oklab,
+    52% 12% at 44% 42%,
+    rgb(var(--aurora-blue-rgb) / 0.18) 0%,
+    rgb(var(--aurora-blue-rgb) / 0.18) 5%,
+    rgb(var(--aurora-blue-rgb) / 0.15) 12%,
+    rgb(var(--aurora-blue-rgb) / 0.12) 22%,
+    rgb(var(--aurora-blue-rgb) / 0.095) 32%,
+    rgb(var(--aurora-blue-rgb) / 0.07) 43%,
+    rgb(var(--aurora-blue-rgb) / 0.045) 52%,
+    rgb(var(--aurora-blue-rgb) / 0.02) 60%,
+    transparent 65%
+  );
+  animation: aurora-drift-1
+    calc(var(--aurora-dur-1, 43s) * var(--aurora-speed-scale, 1)) ease-in-out
+    0s infinite alternate;
+}
+
+.aurora-layer-6 {
+  width: var(--aurora-size-6, 300vmax);
+  height: var(--aurora-size-6, 300vmax);
+  margin-left: calc(var(--aurora-size-6, 300vmax) * -0.5);
+  margin-top: calc(var(--aurora-size-6, 300vmax) * -0.5);
+  opacity: calc(var(--aurora-layer-op-6, 1) * var(--aurora-brightness, 1));
+  transform: rotate(var(--aurora-streak-angle-6, -28deg));
+  background: radial-gradient(
+    44% 12% at 58% 60%,
+    rgb(var(--aurora-lightblue-rgb) / 0.09) 0%,
+    rgb(var(--aurora-lightblue-rgb) / 0.09) 6%,
+    rgb(var(--aurora-lightblue-rgb) / 0.075) 12%,
+    rgb(var(--aurora-blue-rgb) / 0.2) 20%,
+    rgb(var(--aurora-blue-rgb) / 0.17) 30%,
+    rgb(var(--aurora-blue-rgb) / 0.12) 42%,
+    rgb(var(--aurora-blue-rgb) / 0.07) 52%,
+    rgb(var(--aurora-blue-rgb) / 0.035) 60%,
+    transparent 66%
+  );
+  background: radial-gradient(
+    in oklab,
+    44% 12% at 58% 60%,
+    rgb(var(--aurora-lightblue-rgb) / 0.09) 0%,
+    rgb(var(--aurora-lightblue-rgb) / 0.09) 6%,
+    rgb(var(--aurora-lightblue-rgb) / 0.075) 12%,
+    rgb(var(--aurora-blue-rgb) / 0.2) 20%,
+    rgb(var(--aurora-blue-rgb) / 0.17) 30%,
+    rgb(var(--aurora-blue-rgb) / 0.12) 42%,
+    rgb(var(--aurora-blue-rgb) / 0.07) 52%,
+    rgb(var(--aurora-blue-rgb) / 0.035) 60%,
+    transparent 66%
+  );
+  animation: aurora-drift-6
+    calc(var(--aurora-dur-6, 36s) * var(--aurora-speed-scale, 1)) ease-in-out
+    0s infinite alternate;
+}
+
+.aurora-layer-7 {
+  width: var(--aurora-size-7, 340vmax);
+  height: var(--aurora-size-7, 340vmax);
+  margin-left: calc(var(--aurora-size-7, 340vmax) * -0.5);
+  margin-top: calc(var(--aurora-size-7, 340vmax) * -0.5);
+  opacity: calc(var(--aurora-layer-op-7, 1) * var(--aurora-brightness, 1));
+  transform: rotate(var(--aurora-streak-angle-7, -18deg));
+  background: radial-gradient(
+    38% 11% at 62% 46%,
+    rgb(var(--aurora-blue-rgb) / 0.16) 0%,
+    rgb(var(--aurora-blue-rgb) / 0.16) 6%,
+    rgb(var(--aurora-blue-rgb) / 0.13) 15%,
+    rgb(var(--aurora-blue-rgb) / 0.1) 25%,
+    rgb(var(--aurora-blue-rgb) / 0.075) 36%,
+    rgb(var(--aurora-blue-rgb) / 0.05) 47%,
+    rgb(var(--aurora-blue-rgb) / 0.03) 56%,
+    rgb(var(--aurora-blue-rgb) / 0.012) 62%,
+    transparent 66%
+  );
+  background: radial-gradient(
+    in oklab,
+    38% 11% at 62% 46%,
+    rgb(var(--aurora-blue-rgb) / 0.16) 0%,
+    rgb(var(--aurora-blue-rgb) / 0.16) 6%,
+    rgb(var(--aurora-blue-rgb) / 0.13) 15%,
+    rgb(var(--aurora-blue-rgb) / 0.1) 25%,
+    rgb(var(--aurora-blue-rgb) / 0.075) 36%,
+    rgb(var(--aurora-blue-rgb) / 0.05) 47%,
+    rgb(var(--aurora-blue-rgb) / 0.03) 56%,
+    rgb(var(--aurora-blue-rgb) / 0.012) 62%,
+    transparent 66%
+  );
+  animation: aurora-drift-7
+    calc(var(--aurora-dur-7, 48s) * var(--aurora-speed-scale, 1)) ease-in-out
+    0s infinite alternate;
+}
+
+.aurora-layer-2 {
+  width: var(--aurora-size-2, 185vmax);
+  height: var(--aurora-size-2, 185vmax);
+  margin-left: calc(var(--aurora-size-2, 185vmax) * -0.5);
+  margin-top: calc(var(--aurora-size-2, 185vmax) * -0.5);
+  opacity: calc(var(--aurora-layer-op-2, 1) * var(--aurora-brightness, 1));
+  background: radial-gradient(
+    26% 64% at 36% 50%,
+    rgb(var(--aurora-violet-rgb) / 0.8) 0%,
+    rgb(var(--aurora-violet-rgb) / 0.5) 15%,
+    rgb(var(--aurora-violet-rgb) / 0.32) 28%,
+    rgb(var(--aurora-violet-rgb) / 0.2) 41%,
+    rgb(var(--aurora-violet-rgb) / 0.12) 53%,
+    rgb(var(--aurora-violet-rgb) / 0.065) 64%,
+    rgb(var(--aurora-violet-rgb) / 0.03) 73%,
+    rgb(var(--aurora-violet-rgb) / 0.012) 80%,
+    transparent 84%
+  );
+  animation: aurora-drift-2
+    calc(var(--aurora-dur-2, 41s) * var(--aurora-speed-scale, 1)) ease-in-out
+    0s infinite alternate;
+}
+
+.aurora-layer-3 {
+  width: var(--aurora-size-3, 175vmax);
+  height: var(--aurora-size-3, 175vmax);
+  margin-left: calc(var(--aurora-size-3, 175vmax) * -0.5);
+  margin-top: calc(var(--aurora-size-3, 175vmax) * -0.5);
+  opacity: calc(var(--aurora-layer-op-3, 1) * var(--aurora-brightness, 1));
+  background: radial-gradient(
+    22% 72% at 52% 46%,
+    rgb(var(--aurora-blue-rgb) / 0.75) 0%,
+    rgb(var(--aurora-blue-rgb) / 0.46) 15%,
+    rgb(var(--aurora-blue-rgb) / 0.29) 28%,
+    rgb(var(--aurora-blue-rgb) / 0.17) 41%,
+    rgb(var(--aurora-blue-rgb) / 0.09) 53%,
+    rgb(var(--aurora-blue-rgb) / 0.045) 64%,
+    rgb(var(--aurora-blue-rgb) / 0.02) 73%,
+    rgb(var(--aurora-blue-rgb) / 0.008) 80%,
+    transparent 84%
+  );
+  animation: aurora-drift-3
+    calc(var(--aurora-dur-3, 27s) * var(--aurora-speed-scale, 1)) ease-in-out
+    0s infinite alternate;
+}
+
+.aurora-layer-4 {
+  width: var(--aurora-size-4, 165vmax);
+  height: var(--aurora-size-4, 165vmax);
+  margin-left: calc(var(--aurora-size-4, 165vmax) * -0.5);
+  margin-top: calc(var(--aurora-size-4, 165vmax) * -0.5);
+  opacity: calc(var(--aurora-layer-op-4, 1) * var(--aurora-brightness, 1));
+  background:
+    radial-gradient(
+      42% 30% at 45% 64%,
+      rgb(var(--aurora-deep-rgb) / 0.95) 0%,
+      rgb(var(--aurora-deep-rgb) / 0.6) 16%,
+      rgb(var(--aurora-deep-rgb) / 0.38) 30%,
+      rgb(var(--aurora-deep-rgb) / 0.22) 44%,
+      rgb(var(--aurora-deep-rgb) / 0.12) 56%,
+      rgb(var(--aurora-deep-rgb) / 0.06) 67%,
+      rgb(var(--aurora-deep-rgb) / 0.025) 76%,
+      rgb(var(--aurora-deep-rgb) / 0.01) 83%,
+      transparent 87%
+    ),
+    radial-gradient(
+      26% 54% at 54% 70%,
+      rgb(var(--aurora-purple-rgb) / 0.45) 0%,
+      rgb(var(--aurora-purple-rgb) / 0.24) 22%,
+      rgb(var(--aurora-purple-rgb) / 0.12) 42%,
+      rgb(var(--aurora-purple-rgb) / 0.05) 60%,
+      transparent 76%
+    );
+  animation: aurora-drift-4
+    calc(var(--aurora-dur-4, 37s) * var(--aurora-speed-scale, 1)) ease-in-out
+    0s infinite alternate;
+}
+
+.aurora-layer-5 {
+  width: var(--aurora-size-5, 150vmax);
+  height: var(--aurora-size-5, 150vmax);
+  margin-left: calc(var(--aurora-size-5, 150vmax) * -0.5);
+  margin-top: calc(var(--aurora-size-5, 150vmax) * -0.5);
+  opacity: calc(var(--aurora-layer-op-5, 1) * var(--aurora-brightness, 1));
+  background: radial-gradient(
+    30% 44% at 62% 60%,
+    rgb(var(--aurora-purple-rgb) / 0.6) 0%,
+    rgb(var(--aurora-purple-rgb) / 0.34) 16%,
+    rgb(var(--aurora-purple-rgb) / 0.2) 30%,
+    rgb(var(--aurora-purple-rgb) / 0.11) 44%,
+    rgb(var(--aurora-purple-rgb) / 0.055) 57%,
+    rgb(var(--aurora-purple-rgb) / 0.025) 68%,
+    rgb(var(--aurora-purple-rgb) / 0.01) 76%,
+    transparent 82%
+  );
+  animation: aurora-drift-5
+    calc(var(--aurora-dur-5, 44s) * var(--aurora-speed-scale, 1)) ease-in-out
+    0s infinite alternate;
+}
+
+/* Drift keyframes — transform-only (translate3d/rotate/scale), ease-in-out,
+   alternate. Travel distance scales from the per-layer --aurora-travel-N var.
+   Each layer has a unique path so the loop never feels repetitive. */
+/* Sweep keyframes for the three blue bloom bands — translation stays mostly
+   perpendicular to each band's own diagonal (y-dominant), so the band drifts
+   slowly through the violet rather than sliding along itself; rotation rocks
+   a few degrees around the band's angle. Each band has a distinct duration
+   and larger travel so no band lingers in the same place. Transform-only. */
+@keyframes aurora-drift-1 {
+  from {
+    transform: translate3d(calc(var(--aurora-travel-1, 12vmax) * 0.15), calc(var(--aurora-travel-1, 12vmax) * -0.55), 0)
+      rotate(calc(var(--aurora-streak-angle-1, -38deg) - 5deg));
+  }
+  50% {
+    transform: translate3d(0, calc(var(--aurora-travel-1, 12vmax) * -0.05), 0)
+      rotate(var(--aurora-streak-angle-1, -38deg));
+  }
+  to {
+    transform: translate3d(calc(var(--aurora-travel-1, 12vmax) * -0.15), calc(var(--aurora-travel-1, 12vmax) * 0.55), 0)
+      rotate(calc(var(--aurora-streak-angle-1, -38deg) + 4deg));
+  }
+}
+
+@keyframes aurora-drift-6 {
+  from {
+    transform: translate3d(calc(var(--aurora-travel-6, 14vmax) * -0.2), calc(var(--aurora-travel-6, 14vmax) * 0.45), 0)
+      rotate(calc(var(--aurora-streak-angle-6, -28deg) + 3deg));
+  }
+  50% {
+    transform: translate3d(calc(var(--aurora-travel-6, 14vmax) * 0.05), calc(var(--aurora-travel-6, 14vmax) * -0.15), 0)
+      rotate(var(--aurora-streak-angle-6, -28deg));
+  }
+  to {
+    transform: translate3d(calc(var(--aurora-travel-6, 14vmax) * 0.2), calc(var(--aurora-travel-6, 14vmax) * -0.5), 0)
+      rotate(calc(var(--aurora-streak-angle-6, -28deg) - 3deg));
+  }
+}
+
+@keyframes aurora-drift-7 {
+  from {
+    transform: translate3d(calc(var(--aurora-travel-7, 11vmax) * 0.25), calc(var(--aurora-travel-7, 11vmax) * 0.35), 0)
+      rotate(calc(var(--aurora-streak-angle-7, -18deg) - 4deg));
+  }
+  50% {
+    transform: translate3d(calc(var(--aurora-travel-7, 11vmax) * -0.1), calc(var(--aurora-travel-7, 11vmax) * 0.05), 0)
+      rotate(var(--aurora-streak-angle-7, -18deg));
+  }
+  to {
+    transform: translate3d(calc(var(--aurora-travel-7, 11vmax) * -0.25), calc(var(--aurora-travel-7, 11vmax) * -0.4), 0)
+      rotate(calc(var(--aurora-streak-angle-7, -18deg) + 4deg));
+  }
+}
+
+@keyframes aurora-drift-2 {
+  from {
+    transform: translate3d(calc(var(--aurora-travel-2, 22vmax) * -0.3), calc(var(--aurora-travel-2, 22vmax) * 0.6), 0)
+      rotate(24deg) scale(1);
+  }
+  45% {
+    transform: translate3d(calc(var(--aurora-travel-2, 22vmax) * 0.5), calc(var(--aurora-travel-2, 22vmax) * 0.15), 0)
+      rotate(-6deg) scale(1.08);
+  }
+  to {
+    transform: translate3d(calc(var(--aurora-travel-2, 22vmax) * 0.25), calc(var(--aurora-travel-2, 22vmax) * -0.55), 0)
+      rotate(-22deg) scale(0.94);
+  }
+}
+
+@keyframes aurora-drift-3 {
+  from {
+    transform: translate3d(calc(var(--aurora-travel-3, 14vmax) * 0.4), calc(var(--aurora-travel-3, 14vmax) * -0.5), 0)
+      rotate(-30deg) scale(1);
+  }
+  60% {
+    transform: translate3d(calc(var(--aurora-travel-3, 14vmax) * -0.5), calc(var(--aurora-travel-3, 14vmax) * 0.3), 0)
+      rotate(-4deg) scale(0.95);
+  }
+  to {
+    transform: translate3d(calc(var(--aurora-travel-3, 14vmax) * 0.35), calc(var(--aurora-travel-3, 14vmax) * 0.5), 0)
+      rotate(26deg) scale(1.07);
+  }
+}
+
+@keyframes aurora-drift-4 {
+  from {
+    transform: translate3d(calc(var(--aurora-travel-4, 19vmax) * -0.2), calc(var(--aurora-travel-4, 19vmax) * 0.35), 0)
+      rotate(10deg) scale(1);
+  }
+  50% {
+    transform: translate3d(calc(var(--aurora-travel-4, 19vmax) * 0.6), calc(var(--aurora-travel-4, 19vmax) * -0.2), 0)
+      rotate(-16deg) scale(1.09);
+  }
+  to {
+    transform: translate3d(calc(var(--aurora-travel-4, 19vmax) * -0.45), calc(var(--aurora-travel-4, 19vmax) * -0.4), 0)
+      rotate(18deg) scale(0.95);
+  }
+}
+
+@keyframes aurora-drift-5 {
+  from {
+    transform: translate3d(calc(var(--aurora-travel-5, 12vmax) * 0.5), calc(var(--aurora-travel-5, 12vmax) * 0.4), 0)
+      rotate(-14deg) scale(1);
+  }
+  55% {
+    transform: translate3d(calc(var(--aurora-travel-5, 12vmax) * -0.4), calc(var(--aurora-travel-5, 12vmax) * -0.5), 0)
+      rotate(12deg) scale(1.05);
+  }
+  to {
+    transform: translate3d(calc(var(--aurora-travel-5, 12vmax) * 0.2), calc(var(--aurora-travel-5, 12vmax) * 0.55), 0)
+      rotate(-24deg) scale(0.96);
+  }
+}
+
+/* Light darkening for readability: a weak center pool plus local darkening
+   behind the left and right text columns (fades inward). Much lighter than
+   the old vignette; text stays readable without dimming the aurora. Static. */
+.aurora-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      90deg,
+      rgb(9 4 20 / calc(var(--aurora-vignette, 0.3) * 0.9)) 0%,
+      rgb(9 4 20 / 0) 15%
+    ),
+    linear-gradient(
+      270deg,
+      rgb(9 4 20 / calc(var(--aurora-vignette, 0.3) * 0.9)) 0%,
+      rgb(9 4 20 / 0) 15%
+    ),
+    radial-gradient(
+      50% 46% at 50% 44%,
+      rgb(10 4 22 / calc(var(--aurora-vignette, 0.3) * 0.7)) 0%,
+      rgb(10 4 22 / calc(var(--aurora-vignette, 0.3) * 0.28)) 48%,
+      rgb(10 4 22 / 0) 80%
+    );
+}
+
+/* Visible film grain (risograph / grainy photo look): a real monochrome
+   per-pixel noise tile (public/noise-512.png, generated by a small Node
+   script — random mid-gray values with a couple of contrast stops, so it has
+   both light and dark specks). Tiled at 1 CSS px per grain pixel (on hi-DPI
+   screens each grain covers 2-4 device px, so it stays crisp rather than
+   sub-pixel). Static overlay, normal blending, above the gradient layers,
+   below content — text and the blob stay crisp. Opacity + tile size are
+   exposed as CSS vars. */
+.aurora-noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--noise-opacity, 0.08);
+  background-image: url("/noise-512.png");
+  background-size: var(--noise-tile-size, 512px) var(--noise-tile-size, 512px);
+}
+
+/* Reduced motion: layers hold their base placement (centered, unrotated),
+   no drift. */
 @media (prefers-reduced-motion: reduce) {
-  .light-ribbon {
+  .aurora-layer {
     animation: none;
   }
 }
