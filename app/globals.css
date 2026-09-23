@@ -86,7 +86,7 @@
   --noise-opacity: 0.08;
   --noise-tile-size: 512px;
 
-  --aurora-vignette: 0.3;
+  --aurora-vignette: 0.1;
 }
 
 @media (min-width: 768px) {
@@ -717,23 +717,7 @@ body::after {
 .aurora-scrim {
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(
-      90deg,
-      rgb(9 4 20 / calc(var(--aurora-vignette, 0.3) * 0.9)) 0%,
-      rgb(9 4 20 / 0) 15%
-    ),
-    linear-gradient(
-      270deg,
-      rgb(9 4 20 / calc(var(--aurora-vignette, 0.3) * 0.9)) 0%,
-      rgb(9 4 20 / 0) 15%
-    ),
-    radial-gradient(
-      50% 46% at 50% 44%,
-      rgb(10 4 22 / calc(var(--aurora-vignette, 0.3) * 0.7)) 0%,
-      rgb(10 4 22 / calc(var(--aurora-vignette, 0.3) * 0.28)) 48%,
-      rgb(10 4 22 / 0) 80%
-    );
+  background: transparent;
 }
 
 /* Visible film grain (risograph / grainy photo look): a real monochrome
