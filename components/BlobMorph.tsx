@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { useApp } from "@/context/AppContext";
 import { ambientColorForProgress, PHASE_COLORS } from "@/lib/theme";
 
@@ -224,6 +223,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
   const corePathRef = useRef<SVGPathElement>(null);
   const haloPathRef = useRef<SVGPathElement>(null);
+  const haloShiftRef = useRef<SVGGElement>(null);
   const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
   const logoImageRef = useRef<SVGImageElement>(null); // fallback, kept for graceful degradation
 
@@ -243,26 +243,19 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
   const smoothedProgressRef = useRef(0);
 
-  /* Cached ambient values so colors are only written when they actually
-     change (halo fill touches one element; the tint var touches the whole
-     document, so never spam it per frame). */
+  /* Cached halo color so the fill is only written when it actually changes
+     (avoids a per-frame style write to the same element). */
   const lastHaloColorRef = useRef<string | null>(null);
-  const lastAmbientTintRef = useRef<string | null>(null);
+
+  /* Smoothed cursor-proximity to the resolved key (0..1); drives the halo's
+     shift + intensity boost. Written from the tick, never the physics math. */
+  const haloProximityRef = useRef(0);
 
   const { isReducedMotion } = useApp();
   const reducedMotionRef = useRef(isReducedMotion);
   useEffect(() => {
     reducedMotionRef.current = isReducedMotion;
   }, [isReducedMotion]);
-
-  const isKeyActive = progress >= KEY_RIGID_PROGRESS;
-  const tiltCursorX = useMotionValue(0);
-  const tiltCursorY = useMotionValue(0);
-
-  const rawRotateX = useTransform(tiltCursorY, (v) => (isKeyActive ? v * -18 : 0));
-  const rawRotateY = useTransform(tiltCursorX, (v) => (isKeyActive ? v * 18 : 0));
-  const springRotateX = useSpring(rawRotateX, { stiffness: 90, damping: 16 });
-  const springRotateY = useSpring(rawRotateY, { stiffness: 90, damping: 16 });
 
   const cursorRef = useRef<{ x: number; y: number; active: boolean }>({
     x: -9999,
@@ -420,22 +413,11 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     const rVelocities = new Float32Array(NUM_POINTS);
 
     const handleMouseMove = (e: MouseEvent) => {
-      cursorRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        active: true,
-      };
-
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
-      tiltCursorX.set((e.clientX - cx) / cx);
-      tiltCursorY.set((e.clientY - cy) / cy);
+      cursorRef.current = { x: e.clientX, y: e.clientY, active: true };
     };
 
     const handleMouseLeave = () => {
       cursorRef.current.active = false;
-      tiltCursorX.set(0);
-      tiltCursorY.set(0);
     };
 
     window.addEventListener("mousemove", handleMouseMove, { passive: true });
@@ -461,12 +443,14 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
       let svgCenterX = window.innerWidth / 2;
       let svgCenterY = window.innerHeight / 2;
+      let blobScale = 1;
 
       if (svgRef.current) {
         const rect = svgRef.current.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
           svgCenterX = rect.left + rect.width / 2;
           svgCenterY = rect.top + rect.height / 2;
+          blobScale = rect.width / 200;
         }
       }
 
@@ -552,28 +536,50 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
       const detailReveal = computeDetailReveal(currentProgress);
 
-      /* Phase-linked ambient: same progress value as the morph. Reduced motion
-         snaps to the pure phase stop (no in-phase blend). Both writes are
-         cached so they only touch the DOM when the color actually changes. */
-      const ambient = ambientColorForProgress(
-        currentProgress,
-        reducedMotionRef.current,
-      );
-      if (haloPathRef.current && ambient.halo !== lastHaloColorRef.current) {
-        lastHaloColorRef.current = ambient.halo;
-        haloPathRef.current.style.fill = ambient.halo;
-      }
-      if (ambient.tint !== lastAmbientTintRef.current) {
-        lastAmbientTintRef.current = ambient.tint;
-        document.documentElement.style.setProperty("--ambient-tint", ambient.tint);
+      /* Phase-linked halo color: same progress value as the morph. Reduced
+         motion snaps to the pure phase stop (no in-phase blend). Cached so a
+         fill is only written when the color actually changes. */
+      const haloColor = ambientColorForProgress(currentProgress, reducedMotionRef.current);
+      if (haloPathRef.current && haloColor !== lastHaloColorRef.current) {
+        lastHaloColorRef.current = haloColor;
+        haloPathRef.current.style.fill = haloColor;
       }
 
+      /* Halo glow — two blur passes (bright core + wide falloff) rendered by
+         the filter; the tick only tunes the WIDE blur radius, overall opacity,
+         and a subtle translate of the whole glow toward the cursor when it is
+         near the resolved key (mouse only; skipped for reduced motion, and
+         touch never fires mousemove). Values are eased so it glides in/out. */
+      let proximity = 0;
+      let shiftX = 0;
+      let shiftY = 0;
+      if (!reducedMotionRef.current && cursor.active && currentProgress >= KEY_RIGID_PROGRESS) {
+        const dxc = cursor.x - svgCenterX;
+        const dyc = cursor.y - svgCenterY;
+        const dist = Math.hypot(dxc, dyc);
+        const range = 300;
+        if (dist < range && dist > 0) {
+          proximity = Math.pow(1 - dist / range, 2);
+          const maxShiftPx = 16;
+          const shiftUser = maxShiftPx / blobScale;
+          shiftX = (dxc / dist) * shiftUser * proximity;
+          shiftY = (dyc / dist) * shiftUser * proximity;
+        }
+      }
+      haloProximityRef.current += (proximity - haloProximityRef.current) * 0.2;
+      const easedProximity = haloProximityRef.current;
+
       if (glowBlurRef.current) {
-        const currentBlur = 4 + 8 * (1 - detailReveal);
-        glowBlurRef.current.setAttribute("stdDeviation", currentBlur.toFixed(2));
+        const wideBlur = 20 + 5 * (1 - detailReveal) + 10 * easedProximity;
+        glowBlurRef.current.setAttribute("stdDeviation", wideBlur.toFixed(2));
+      }
+      if (haloShiftRef.current) {
+        haloShiftRef.current.style.transform =
+          `translate(${shiftX.toFixed(2)}px ${shiftY.toFixed(2)}px)`;
       }
       if (haloPathRef.current) {
-        haloPathRef.current.style.opacity = String(0.03 + 0.09 * (1 - detailReveal));
+        const opacity = 0.1 + 0.05 * (1 - detailReveal) + 0.06 * easedProximity;
+        haloPathRef.current.style.opacity = opacity.toFixed(3);
       }
 
       // Core: flat black, always, no conditional and no gradient/stroke —
@@ -608,7 +614,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseleave", handleMouseLeave);
     };
-  }, [tiltCursorX, tiltCursorY]);
+  }, []);
 
   /* Mesh-gradient settle + drift values. Color/tempo read from `progress`
      only; the drain drift is killed for reduced motion (static field).
@@ -630,20 +636,26 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   } as React.CSSProperties;
 
   return (
-    <motion.svg
+    <svg
       ref={svgRef}
       viewBox="0 0 200 200"
       className="w-[var(--blob-size)] h-[var(--blob-size)] pointer-events-none"
-      style={{
-        rotateX: springRotateX,
-        rotateY: springRotateY,
-        perspective: 600,
-        transformStyle: "preserve-3d",
-      }}
     >
         <defs>
-          <filter id="blob-ambient-halo" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="12" />
+          {/* Halo: two blur passes merged into ONE phase-colored bloom — a
+              tight high-alpha core (bright) + a wide soft falloff, read as a
+              glowing arrival rather than a hard-edged shadow. No second path:
+              the halo path is fed by the physics loop exactly as before. */}
+          <filter id="blob-ambient-halo" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="haloCore" />
+            <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="20" result="haloWide" />
+            <feComponentTransfer in="haloCore" result="haloCoreBoost">
+              <feFuncA type="linear" slope="1.65" />
+            </feComponentTransfer>
+            <feMerge>
+              <feMergeNode in="haloWide" />
+              <feMergeNode in="haloCoreBoost" />
+            </feMerge>
           </filter>
 
           <filter id="logo-glow-filter" x="-60%" y="-60%" width="220%" height="220%">
@@ -679,7 +691,11 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           </radialGradient>
         </defs>
 
-        <path ref={haloPathRef} fill={PHASE_COLORS[0]} filter="url(#blob-ambient-halo)" />
+        {/* Halo output; wrapped so the whole glow can drift toward the cursor.
+            The path's d/fill are still owned by the physics loop. */}
+        <g ref={haloShiftRef}>
+          <path ref={haloPathRef} id="blob-halo-path" fill={PHASE_COLORS[0]} filter="url(#blob-ambient-halo)" />
+        </g>
 
         <path ref={corePathRef} id="blob-core-path" />
 
@@ -739,6 +755,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             />
           )
         )}
-      </motion.svg>
+      </svg>
   );
 }

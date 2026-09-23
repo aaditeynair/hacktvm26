@@ -29,6 +29,7 @@ import {
 } from "@/lib/mobile-progress";
 import { useApp } from "@/context/AppContext";
 import { useLatchedProgress } from "@/hooks/useLatchedProgress";
+import { LightRibbons } from "@/components/LightRibbons";
 
 const LAST_INDEX = BEATS.length - 1;
 
@@ -108,6 +109,9 @@ export function MobileExperience() {
 
   return (
     <main className="relative h-svh w-full overflow-hidden bg-black text-white">
+      {/* Light-ribbon background — same latched progress as the blob. */}
+      <LightRibbons progress={effectiveProgress} />
+
       {/* Top-half blob stage (positioned via .mobile-stage) */}
       <BlobStage className="mobile-stage">
         <BlobMorph progress={effectiveProgress} />

@@ -1,22 +1,18 @@
 /**
  * HackTVM'26 — Access Point
- * Phase-linked ambient color theme.
+ * Phase-linked color theme.
  *
  * One color stop per scroll phase (0 = Overview → 4 = Key). The blob's halo
- * glow and the page's ambient background tint both interpolate between
- * adjacent stops as the SAME progress value that already drives the blob morph
- * crosses each phase band — no second progress source anywhere.
+ * glow interpolates between adjacent stops as the SAME progress value that
+ * already drives the blob morph crosses each phase band — no second progress
+ * source anywhere. The light-ribbon background (components/LightRibbons.tsx)
+ * reads the same progress and shifts its per-band opacities from the blue
+ * side of this arc toward the violet/purple side as it resolves.
  *
  * Arc: bright light-blue → saturated blue → soft indigo → violet → deep
  * purple. Monotonic bright → deep → dim, so ambient energy drains as the blob
  * resolves and Phase 4 (the settled key) reads calm and stable against the
  * cream key logo.
- *
- * FIRST PASS — all values are verbatim from lib/constants.ts COLORS so they
- * are easy to swap if the arc feels off. Alternative arcs: (a) end on pale
- * cream (#E9E4C9, the GRADIENT_STOPS tail) instead of deep purple so the key
- * phase is "less saturated"; (b) make Phase 2 #4B2E6F (brand purple) instead
- * of indigo.
  */
 
 /** One stop per phase, in EXACTLY scroll order. */
@@ -27,9 +23,6 @@ export const PHASE_COLORS = [
   "#603DB6", // 3 Timeline — violet, deepening
   "#340A61", // 4 Key — deep purple, dim + calm (settled)
 ] as const;
-
-/** Alpha of the background tint layer that sits behind all content. */
-export const AMBIENT_TINT_ALPHA = 0.14;
 
 const NUM_PHASES = PHASE_COLORS.length;
 
@@ -54,22 +47,13 @@ function mixRgb(
   ];
 }
 
-export interface AmbientColor {
-  /** Halo fill as a CSS `rgb()` string. */
-  halo: string;
-  /** Background tint as a CSS `rgba()` string (alpha already applied). */
-  tint: string;
-}
-
 /**
- * Interpolate the ambient colors for a 0..1 progress.
+ * Interpolate the halo color across 0..1 progress, in the phase order:
+ * Phase 0 → 4. Returns a CSS `rgb(r g b)` string.
  * `snap` (reduced motion) returns the pure current-phase stop instead of an
- * in-phase blend, so color changes at a phase boundary are instant.
+ * in-phase blend, so a phase change is instant.
  */
-export function ambientColorForProgress(
-  progress: number,
-  snap = false,
-): AmbientColor {
+export function ambientColorForProgress(progress: number, snap = false): string {
   const p = Math.min(1, Math.max(0, progress));
   const phase = Math.min(NUM_PHASES - 1, Math.floor(p * NUM_PHASES));
 
@@ -83,14 +67,5 @@ export function ambientColorForProgress(
     rgb = mixRgb(hexToRgb(PHASE_COLORS[phase]), hexToRgb(next), t);
   }
 
-  return {
-    halo: `rgb(${rgb[0]} ${rgb[1]} ${rgb[2]})`,
-    tint: `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${AMBIENT_TINT_ALPHA})`,
-  };
+  return `rgb(${rgb[0]} ${rgb[1]} ${rgb[2]})`;
 }
-
-/** Phase-0 tint for the pre-hydration `:root` fallback in globals.css. */
-export const INITIAL_AMBIENT_TINT = (() => {
-  const rgb = hexToRgb(PHASE_COLORS[0]);
-  return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${AMBIENT_TINT_ALPHA})`;
-})();
