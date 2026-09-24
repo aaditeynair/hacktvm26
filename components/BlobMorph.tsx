@@ -134,25 +134,43 @@ const MESH_SETTLE_START = 0.55;            // begin calming before shape lock
 const MESH_SETTLE_END = KEY_RIGID_PROGRESS; // fully calm once key is rigid
 
 /* --- Blob film grain (visual layer only) --------------------------------
-   Sparse, fine, filmic grain clipped to the blob silhouette. Not a filter,
-   not animated, not per-frame — a static <pattern>+<rect> (tile
-   public/blob-grain.png: alpha-based, ~20% density, cool off-white specks,
-   no tinted fill) followed by a static directional veil <rect> that fades it
-   to pure black toward the bottom-right, like light catching a matte surface.
-   Grain strength lerps GRAIN_ALIVE -> GRAIN_CALM with the mesh settle (React
-   render value). Static, so reduced motion needs no special case. */
-const GRAIN_ALIVE = 0.55;
-const GRAIN_CALM = 0.25;
+   TWO static grain layers + a directional veil + a soft inner sheen, all
+   clipped to the blob silhouette. Not filters, not animated, not per-frame:
+   static <pattern>+<rect> pairs feeding phase-linked opacities (React render
+   values). Tiles: public/blob-grain.png (~20-25% density, cool off-white
+   specks, sparkle tail to 0.85) and public/blob-grain-coarse.png (~4%
+   density, soft violet clumps). Strength lerps the *_ALIVE -> *_CALM constants
+   with the mesh settle; the lerped view opacity is clamped to SVG's 0..1
+   range so the whole fade is visible across the settle. Static, so reduced
+   motion needs no special case. */
+const GRAIN_ALIVE = 1;
+const GRAIN_CALM = 0.35;
 const GRAIN_TILE_PX = 256; // tile edge in px (density lives in the tile itself)
 
+/* Coarse clump layer: faint violet dust read between the fine texels.
+   Sits under the fine grain and nearly vanishes in the calm state. */
+const COARSE_ALIVE = 1;
+const COARSE_CALM = 0.2;
+
 /* Directional veil: linearGradient in objectBoundingBox units (0..1),
-   fully transparent at the top-left, ramping to #000000 at
-   GRAIN_VEIL_MAX_OPACITY toward the bottom-right. */
+   transparent until GRAIN_VEIL_START_RAMP along the diagonal, ramping to
+   #000000 at GRAIN_VEIL_MAX_OPACITY toward the bottom-right. Kept mild so
+   the texture survives across the whole blob. */
 const GRAIN_VEIL_X1 = 0;
 const GRAIN_VEIL_Y1 = 0;
 const GRAIN_VEIL_X2 = 1;
 const GRAIN_VEIL_Y2 = 1;
-const GRAIN_VEIL_MAX_OPACITY = 0.9;
+const GRAIN_VEIL_START_RAMP = 0.35;
+const GRAIN_VEIL_MAX_OPACITY = 0.55;
+
+/* Inner edge sheen: a <use> of #blob-core-path stroked with a top-left ->
+   bottom-right gradient, clipped so only the inner half of the stroke shows
+   as a soft rim light. Peak alpha lerps GRAIN_SHEEN_PEAK_ALIVE ->
+   GRAIN_SHEEN_PEAK_CALM so it is subtle in the calmer phase. Plain static
+   geometry — no extra clip, mask, or filter pass. */
+const GRAIN_SHEEN_STROKE_WIDTH = 3;
+const GRAIN_SHEEN_PEAK_ALIVE = 0.35;
+const GRAIN_SHEEN_PEAK_CALM = 0.08;
 
 function computeMeshSettle(p: number): number {
   const t = Math.min(1, Math.max(0, (p - MESH_SETTLE_START) / (MESH_SETTLE_END - MESH_SETTLE_START)));
@@ -278,7 +296,16 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       const rect = svg.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       if (rect.width > 0 && dpr > 0) {
-        setGrainTileUnits((GRAIN_TILE_PX * 200) / (rect.width * dpr));
+        // Exact texel = device-pixel mapping, then SNAP the pattern tile to a
+        // whole number of device pixels: round(dpr * blobPx/200 * tileUnits)
+        // gives the device px per tile, which we convert back to user units.
+        // When RO and DPR agree this lands on GRAIN_TILE_PX itself; the snap
+        // guards against any fractional drift so texels sit on the device
+        // grid and never interpolate to mush.
+        const tileUnits = (GRAIN_TILE_PX * 200) / (rect.width * dpr);
+        const devicePxPerTile = (dpr * rect.width * tileUnits) / 200;
+        const snapped = Math.max(1, Math.round(devicePxPerTile));
+        setGrainTileUnits((snapped * 200) / (rect.width * dpr));
       }
     };
     update();
@@ -619,15 +646,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         haloPathRef.current.style.opacity = opacity.toFixed(3);
       }
 
-      // Core: flat black, always, no conditional and no gradient/stroke —
-      // simplest possible, guaranteed pitch black at every point in the scroll,
-      // nothing left that can look "off-black" or swap abruptly.
-      if (corePathRef.current) {
-        corePathRef.current.style.fill = "#000000";
-        corePathRef.current.style.stroke = "none";
-        corePathRef.current.style.opacity = "1";
-      }
-
       if (shapeElRefs.current.length) {
         const n = shapeElRefs.current.length;
         const REVEAL_BAND = 0.25;
@@ -653,10 +671,14 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     };
   }, []);
 
-  /* Phase-linked grain intensity: lerp GRAIN_ALIVE -> GRAIN_CALM with the
-     mesh settle. React render value only — never written from the tick. */
+  /* Phase-linked intensities: lerp the *_ALIVE -> *_CALM constants with the
+     mesh settle, clamped to SVG's 0..1 opacity range so the whole fade is
+     visible (never pegged at 1). React render values only — never written
+     from the tick. */
   const meshSettle = computeMeshSettle(progress);
-  const grainOpacity = GRAIN_ALIVE + (GRAIN_CALM - GRAIN_ALIVE) * meshSettle;
+  const grainOpacity = Math.min(1, Math.max(0, GRAIN_ALIVE + (GRAIN_CALM - GRAIN_ALIVE) * meshSettle));
+  const coarseOpacity = Math.min(1, Math.max(0, COARSE_ALIVE + (COARSE_CALM - COARSE_ALIVE) * meshSettle));
+  const sheenPeak = GRAIN_SHEEN_PEAK_ALIVE + (GRAIN_SHEEN_PEAK_CALM - GRAIN_SHEEN_PEAK_ALIVE) * meshSettle;
 
   return (
     <svg
@@ -664,141 +686,190 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       viewBox="0 0 200 200"
       className="w-[var(--blob-size)] h-[var(--blob-size)] pointer-events-none"
     >
-        <defs>
-          {/* Halo: two blur passes merged into ONE phase-colored bloom — a
+      <defs>
+        {/* Halo: two blur passes merged into ONE phase-colored bloom — a
               tight high-alpha core (bright) + a wide soft falloff, read as a
               glowing arrival rather than a hard-edged shadow. No second path:
               the halo path is fed by the physics loop exactly as before. */}
-          <filter id="blob-ambient-halo" x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="haloCore" />
-            <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="20" result="haloWide" />
-            <feComponentTransfer in="haloCore" result="haloCoreBoost">
-              <feFuncA type="linear" slope="1.65" />
-            </feComponentTransfer>
-            <feMerge>
-              <feMergeNode in="haloWide" />
-              <feMergeNode in="haloCoreBoost" />
-            </feMerge>
-          </filter>
+        <filter id="blob-ambient-halo" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="haloCore" />
+          <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="20" result="haloWide" />
+          <feComponentTransfer in="haloCore" result="haloCoreBoost">
+            <feFuncA type="linear" slope="1.65" />
+          </feComponentTransfer>
+          <feMerge>
+            <feMergeNode in="haloWide" />
+            <feMergeNode in="haloCoreBoost" />
+          </feMerge>
+        </filter>
 
-          <filter id="logo-glow-filter" x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="glowBlur" />
-            <feComponentTransfer in="glowBlur" result="dimmedGlow">
-              <feFuncA type="linear" slope="0.75" />
-            </feComponentTransfer>
-            <feMerge>
-              <feMergeNode in="dimmedGlow" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
+        <filter id="logo-glow-filter" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="glowBlur" />
+          <feComponentTransfer in="glowBlur" result="dimmedGlow">
+            <feFuncA type="linear" slope="0.75" />
+          </feComponentTransfer>
+          <feMerge>
+            <feMergeNode in="dimmedGlow" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
 
-          {/* Grain clip: re-uses the physics-written core silhouette via <use>, so
+        {/* Grain clip: re-uses the physics-written core silhouette via <use>, so
               the grain + veil always stay in sync with the morph without a
               second path being written by the loop. */}
-          <clipPath id="blob-mesh-clip">
-            <use href="#blob-core-path" />
-          </clipPath>
-          {/* Directional veil gradient: transparent top-left -> #000000 at
-              GRAIN_VEIL_MAX_OPACITY bottom-right (objectBoundingBox units).
-              Static; a plain gradient, not a filter or mask. */}
-          <linearGradient
-            id="blob-veil"
-            gradientUnits="objectBoundingBox"
-            x1={GRAIN_VEIL_X1}
-            y1={GRAIN_VEIL_Y1}
-            x2={GRAIN_VEIL_X2}
-            y2={GRAIN_VEIL_Y2}
-          >
-            <stop offset="0%" stopColor="#000000" stopOpacity="0" />
-            <stop offset="100%" stopColor="#000000" stopOpacity={GRAIN_VEIL_MAX_OPACITY} />
-          </linearGradient>
-          {/* Static film-grain tile, sized in user units so each texel is
+        <clipPath id="blob-mesh-clip">
+          <use href="#blob-core-path" />
+        </clipPath>
+        {/* Directional veil gradient: transparent until
+              GRAIN_VEIL_START_RAMP along the top-left -> bottom-right
+              diagonal, then ramping to #000000 at GRAIN_VEIL_MAX_OPACITY
+              (objectBoundingBox units). Static; a plain gradient, not a
+              filter or mask. */}
+        <linearGradient
+          id="blob-veil"
+          gradientUnits="objectBoundingBox"
+          x1={GRAIN_VEIL_X1}
+          y1={GRAIN_VEIL_Y1}
+          x2={GRAIN_VEIL_X2}
+          y2={GRAIN_VEIL_Y2}
+        >
+          <stop offset="0%" stopColor="#000000" stopOpacity="0" />
+          <stop offset={`${GRAIN_VEIL_START_RAMP * 100}%`} stopColor="#000000" stopOpacity="0" />
+          <stop offset="100%" stopColor="#000000" stopOpacity={GRAIN_VEIL_MAX_OPACITY} />
+        </linearGradient>
+        {/* Static film-grain tiles, sized in user units so each texel is
               exactly 1 DEVICE pixel: tileUnits = 256 * 200 / (blobPx * dpr)
               (see grainTileUnits). patternUnits="userSpaceOnUse" pins the
               tile size to the 200-unit viewBox, not the 0..1 box. Default
               (auto) resampling — no pixelated/crisp-edges, which caused the
               streaky look. */}
-          <pattern
-            id="blob-grain"
-            patternUnits="userSpaceOnUse"
+        <pattern
+          id="blob-grain"
+          patternUnits="userSpaceOnUse"
+          width={grainTileUnits}
+          height={grainTileUnits}
+        >
+          <image
+            href="/blob-grain.png"
             width={grainTileUnits}
             height={grainTileUnits}
-          >
-            <image
-              href="/blob-grain.png"
-              width={grainTileUnits}
-              height={grainTileUnits}
-              preserveAspectRatio="none"
-            />
-          </pattern>
-        </defs>
+            preserveAspectRatio="none"
+          />
+        </pattern>
+        <pattern
+          id="blob-grain-coarse"
+          patternUnits="userSpaceOnUse"
+          width={grainTileUnits}
+          height={grainTileUnits}
+        >
+          <image
+            href="/blob-grain-coarse.png"
+            width={grainTileUnits}
+            height={grainTileUnits}
+            preserveAspectRatio="none"
+          />
+        </pattern>
+        {/* Inner edge sheen gradient (userSpaceOnUse): light blue rim at the
+              top-left fading to fully transparent by ~60% along the diagonal.
+              The peak alpha is phase-linked via sheenPeak (render value). */}
+        <linearGradient
+          id="blob-sheen"
+          gradientUnits="userSpaceOnUse"
+          x1="0"
+          y1="0"
+          x2="200"
+          y2="200"
+        >
+          <stop offset="0%" stopColor="rgb(129 183 211)" stopOpacity={sheenPeak} />
+          <stop offset="60%" stopColor="rgb(129 183 211)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
 
-        {/* Halo output; wrapped so the whole glow can drift toward the cursor.
+      {/* Halo output; wrapped so the whole glow can drift toward the cursor.
             The path's d/fill are still owned by the physics loop. */}
-        <g ref={haloShiftRef}>
-          <path ref={haloPathRef} id="blob-halo-path" fill={PHASE_COLORS[0]} filter="url(#blob-ambient-halo)" />
-        </g>
+      <g ref={haloShiftRef}>
+        <path ref={haloPathRef} id="blob-halo-path" fill={PHASE_COLORS[0]} filter="url(#blob-ambient-halo)" />
+      </g>
 
+      {/* Core silhouette: pure black via the wrapper <g> (presentation
+            attributes, not per-frame writes). The physics loop only feeds the
+            path's `d`; the group's fill/stroke are static so #blob-core-path
+            itself carries no inline presentation — which is what lets the
+            sheen <use> restyle its clone cleanly. */}
+      <g fill="#000000" stroke="none">
         <path ref={corePathRef} id="blob-core-path" />
+      </g>
 
-        {/* Grain field, inside the blob silhouette. Flat black base, then the
-            static grain tile, then the static directional veil: grain is
-            strongest top-left and veiled to pure black toward the bottom-right.
-            All static content; only the grain rect's opacity is phase-linked
-            (React prop, not per-frame). */}
-        <g clipPath="url(#blob-mesh-clip)">
-          <rect width="200" height="200" fill="#000000" />
-          <rect width="200" height="200" fill="url(#blob-grain)" opacity={grainOpacity} />
-          <rect width="200" height="200" fill="url(#blob-veil)" />
-        </g>
+      {/* Grain field, inside the blob silhouette. Flat black base, then the
+            coarse clump layer, then the fine grain tile, then the directional
+            veil: texture is strongest top-left and veiled toward the
+            bottom-right, but the veil stops short of pure black so grain
+            survives everywhere. The inner edge sheen <use> re-draws the same
+            silhouette as a static stroke, clipped so only its inner half
+            shows — a soft rim light that follows the morph for free. All
+            static content; only the opacities are phase-linked (React props,
+            not per-frame). */}
+      <g clipPath="url(#blob-mesh-clip)">
+        <rect width="200" height="200" fill="#000000" />
+        <rect width="200" height="200" fill="url(#blob-grain-coarse)" opacity={coarseOpacity} />
+        <rect width="200" height="200" fill="url(#blob-grain)" opacity={grainOpacity} />
+        <rect width="200" height="200" fill="url(#blob-veil)" />
+        <use
+          id="blob-sheen-use"
+          href="#blob-core-path"
+          fill="none"
+          stroke="url(#blob-sheen)"
+          strokeWidth={GRAIN_SHEEN_STROKE_WIDTH}
+        />
+      </g>
 
-        {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
-          <svg
+      {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
+        <svg
+          id={KEY_VISUAL_ID}
+          x={keyImageRef.current.x + LOGO_OFFSET_X}
+          y={keyImageRef.current.y + LOGO_OFFSET_Y}
+          width={keyImageRef.current.width}
+          height={keyImageRef.current.height}
+          viewBox={detailViewBox}
+          filter="url(#logo-glow-filter)"
+          preserveAspectRatio="xMidYMid meet"
+          style={{ transformBox: "fill-box", transformOrigin: "center" }}
+        >
+          {detailDefsMarkup && (
+            <g dangerouslySetInnerHTML={{ __html: detailDefsMarkup }} />
+          )}
+          {detailShapes.map((shape, i) => {
+            const Tag = shape.tag as any;
+            return (
+              <Tag
+                key={i}
+                {...shape.props}
+                ref={(el: SVGGraphicsElement | null) => { shapeElRefs.current[i] = el; }}
+                style={{ ...shape.props.style, opacity: 0 }}
+              />
+            );
+          })}
+        </svg>
+      ) : (
+        keyImageReady && keyImageRef.current && (
+          <image
             id={KEY_VISUAL_ID}
+            ref={logoImageRef}
+            href={keyImageRef.current.href}
             x={keyImageRef.current.x + LOGO_OFFSET_X}
             y={keyImageRef.current.y + LOGO_OFFSET_Y}
             width={keyImageRef.current.width}
             height={keyImageRef.current.height}
-            viewBox={detailViewBox}
             filter="url(#logo-glow-filter)"
+            style={{
+              opacity: 0,
+              transformBox: "fill-box",
+              transformOrigin: "center",
+            }}
             preserveAspectRatio="xMidYMid meet"
-            style={{ transformBox: "fill-box", transformOrigin: "center" }}
-          >
-            {detailDefsMarkup && (
-              <g dangerouslySetInnerHTML={{ __html: detailDefsMarkup }} />
-            )}
-            {detailShapes.map((shape, i) => {
-              const Tag = shape.tag as any;
-              return (
-                <Tag
-                  key={i}
-                  {...shape.props}
-                  ref={(el: SVGGraphicsElement | null) => { shapeElRefs.current[i] = el; }}
-                  style={{ ...shape.props.style, opacity: 0 }}
-                />
-              );
-            })}
-          </svg>
-        ) : (
-          keyImageReady && keyImageRef.current && (
-            <image
-              id={KEY_VISUAL_ID}
-              ref={logoImageRef}
-              href={keyImageRef.current.href}
-              x={keyImageRef.current.x + LOGO_OFFSET_X}
-              y={keyImageRef.current.y + LOGO_OFFSET_Y}
-              width={keyImageRef.current.width}
-              height={keyImageRef.current.height}
-              filter="url(#logo-glow-filter)"
-              style={{
-                opacity: 0,
-                transformBox: "fill-box",
-                transformOrigin: "center",
-              }}
-              preserveAspectRatio="xMidYMid meet"
-            />
-          )
-        )}
-      </svg>
+          />
+        )
+      )}
+    </svg>
   );
 }
