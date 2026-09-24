@@ -194,14 +194,73 @@ const GRAIN_VEIL_Y2 = 1;
 const GRAIN_VEIL_START_RAMP = 0.35;
 const GRAIN_VEIL_MAX_OPACITY = 0.55;
 
-/* Inner edge sheen: a <use> of #blob-core-path stroked with a top-left ->
-   bottom-right gradient, clipped so only the inner half of the stroke shows
-   as a soft rim light. Peak alpha lerps GRAIN_SHEEN_PEAK_ALIVE ->
-   GRAIN_SHEEN_PEAK_CALM so it is subtle in the calmer phase. Plain static
-   geometry — no extra clip, mask, or filter pass. */
-const GRAIN_SHEEN_STROKE_WIDTH = 3;
-const GRAIN_SHEEN_PEAK_ALIVE = 0.35;
-const GRAIN_SHEEN_PEAK_CALM = 0.08;
+/* --- 3D lighting (visual layer only) ------------------------------------
+   Light direction + specular highlight + key/bounce rim strokes + a contact
+   shadow. Everything is derived from LIGHT_X / LIGHT_Y (the light comes FROM
+   that direction, top-left), so tuning these two numbers moves every effect
+   consistently. Blob must stay primarily black; peaks are modest and the
+   phase lerp keeps depth visible while the gray drift + grain fade out. */
+const LIGHT_X = -0.55;
+const LIGHT_Y = -0.6;
+const LIGHT_FOLLOWS_CURSOR = true; // specular glides toward the cursor
+const LIGHT_CURSOR_SHIFT = 12; // max shift, viewBox units
+const LIGHT_CURSOR_TRANSITION = "transform 350ms ease-out";
+
+const LIGHT_MAG = Math.hypot(LIGHT_X, LIGHT_Y);
+const LIGHT_DX = LIGHT_X / LIGHT_MAG; // unit vector toward the light
+const LIGHT_DY = LIGHT_Y / LIGHT_MAG;
+const LIGHT_ANGLE_DEG = (Math.atan2(LIGHT_DY, LIGHT_DX) * 180) / Math.PI;
+
+/* Specular sheen: an ellipse (rx vs ry) offset toward the light, its major
+   axis turned to follow the light angle. Filled with an objectBoundingBox
+   radial gradient so the stop falloff matches the rotated ellipse exactly.
+   Peak alpha ~0.13; 8 eased stops -> 0 at the edge. */
+const SPEC_OFFSET = 27.5; // center offset toward the light (viewBox units)
+const SPEC_CENTER_X = 100 + LIGHT_DX * SPEC_OFFSET;
+const SPEC_CENTER_Y = 100 + LIGHT_DY * SPEC_OFFSET;
+const SPEC_RX = 60;
+const SPEC_RY = 45;
+const SPEC_PEAK = 0.13;
+const SPEC_COLOR = "rgb(190 205 255)";
+const SPEC_STOPS: ReadonlyArray<number> = [1, 0.88, 0.74, 0.58, 0.44, 0.28, 0.12, 0];
+const SPEC_ALIVE = 1;
+const SPEC_CALM = 0.55;
+
+/* Rim strokes: two <use> of #blob-core-path stroked with gradients along the
+   light axis, clipped so only the inner halves show — a key lit-side rim and
+   a violet bounce on the shadow side. */
+const RIM_KEY_PEAK = 0.45; // lightblue on the lit side
+const RIM_KEY_STROKE_WIDTH = 4;
+const RIM_KEY_FADE = 0.55; // fully transparent by this fraction along the axis
+const RIM_KEY_COLOR = "rgb(129 183 211)";
+const RIM_KEY_X1 = 100 + LIGHT_DX * 100;
+const RIM_KEY_Y1 = 100 + LIGHT_DY * 100;
+const RIM_KEY_X2 = 100 - LIGHT_DX * 100;
+const RIM_KEY_Y2 = 100 - LIGHT_DY * 100;
+const RIM_BOUNCE_PEAK = 0.22; // violet on the shadow side
+const RIM_BOUNCE_STROKE_WIDTH = 3;
+const RIM_BOUNCE_FADE = 0.5;
+const RIM_BOUNCE_COLOR = "rgb(96 61 182)";
+const RIM_ALIVE = 1;
+const RIM_CALM = 0.55;
+
+/* Contact shadow: a soft black ellipse under the blob, offset away from the
+   light. No blur filter — a radialGradient fade baked into the ellipse.
+   SHADOW_ALPHA = 0 disables it. Constant (not phase-linked). */
+const SHADOW_ALPHA = 0.35;
+const SHADOW_CX = 106; // ~+6, away from the light
+const SHADOW_CY = 178; // ~+78, below the blob
+const SHADOW_RX = 70;
+const SHADOW_RY = 12;
+const SHADOW_STOPS: ReadonlyArray<readonly [number, number]> = [
+  [0, 1],
+  [0.12, 0.96],
+  [0.25, 0.88],
+  [0.4, 0.74],
+  [0.6, 0.52],
+  [0.8, 0.24],
+  [1, 0],
+];
 
 function computeMeshSettle(p: number): number {
   const t = Math.min(1, Math.max(0, (p - MESH_SETTLE_START) / (MESH_SETTLE_END - MESH_SETTLE_START)));
@@ -276,6 +335,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const haloPathRef = useRef<SVGPathElement>(null);
   const haloShiftRef = useRef<SVGGElement>(null);
   const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
+  const specularShiftRef = useRef<SVGGElement>(null);
   const logoImageRef = useRef<SVGImageElement>(null); // fallback, kept for graceful degradation
 
   const [detailShapes, setDetailShapes] = useState<DetailShape[] | null>(null);
@@ -351,6 +411,35 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       dprMedia.removeEventListener?.("change", update);
     };
   }, []);
+
+  /* Cursor-shifted specular highlight (LIGHT_FOLLOWS_CURSOR). One SMALL
+     mousemove listener in its own effect — NOT in the tick. It writes a
+     single CSS transform translate() on the specular <g> per event; a CSS
+     transition (LIGHT_CURSOR_TRANSITION) eases it toward the cursor. No
+     per-frame JS. Skipped for reduced motion and coarse (touch) pointers,
+     which have no hovering cursor to follow. */
+  useEffect(() => {
+    const svg = svgRef.current;
+    const el = specularShiftRef.current;
+    if (!svg || !el || !LIGHT_FOLLOWS_CURSOR) return;
+    if (isReducedMotion) return;
+    if (!window.matchMedia("(pointer: fine)").matches) return;
+    const apply = (e: MouseEvent) => {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      // Normalized cursor offset from the blob center, -1..1 on each axis.
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+      // Shift up to LIGHT_CURSOR_SHIFT viewBox units, converted to CSS px
+      // (1 user unit = rect.width / 200 css px).
+      const maxCss = (LIGHT_CURSOR_SHIFT * rect.width) / 200;
+      const tx = nx * maxCss;
+      const ty = ny * maxCss;
+      el.style.transform = `translate(${tx.toFixed(2)}px ${ty.toFixed(2)}px)`;
+    };
+    window.addEventListener("mousemove", apply);
+    return () => window.removeEventListener("mousemove", apply);
+  }, [isReducedMotion]);
 
   const cursorRef = useRef<{ x: number; y: number; active: boolean }>({
     x: -9999,
@@ -708,12 +797,16 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const meshSettle = computeMeshSettle(progress);
   const grainOpacity = Math.min(1, Math.max(0, GRAIN_ALIVE + (GRAIN_CALM - GRAIN_ALIVE) * meshSettle));
   const grayOpacity = Math.min(1, Math.max(0, MESH_GRAY_ALIVE + (MESH_GRAY_CALM - MESH_GRAY_ALIVE) * meshSettle));
-  const sheenPeak = GRAIN_SHEEN_PEAK_ALIVE + (GRAIN_SHEEN_PEAK_CALM - GRAIN_SHEEN_PEAK_ALIVE) * meshSettle;
+  /* Depth effects stay partially visible in phase 4: lerp SPEC/RIM_ALIVE ->
+     *_CALM (1 -> 0.55). React render values only — never written from the tick. */
+  const specOpacity = Math.min(1, Math.max(0, SPEC_ALIVE + (SPEC_CALM - SPEC_ALIVE) * meshSettle));
+  const rimOpacity = Math.min(1, Math.max(0, RIM_ALIVE + (RIM_CALM - RIM_ALIVE) * meshSettle));
 
   return (
     <svg
       ref={svgRef}
       viewBox="0 0 200 200"
+      style={{ overflow: "visible" }}
       className="w-[var(--blob-size)] h-[var(--blob-size)] pointer-events-none"
     >
       <defs>
@@ -810,21 +903,73 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             preserveAspectRatio="none"
           />
         </pattern>
-        {/* Inner edge sheen gradient (userSpaceOnUse): light blue rim at the
-              top-left fading to fully transparent by ~60% along the diagonal.
-              The peak alpha is phase-linked via sheenPeak (render value). */}
+        {/* Lighting gradients (all plain gradients — no filters/masks).
+              Specular: objectBoundingBox radial fits the rotated ellipse
+              exactly, 8 eased stops -> 0 by the edge. Rims: userSpaceOnUse
+              linear, peak on the lit / shadow corner, fading to 0 by
+              RIM_*_FADE along the light axis. Shadow: objectBoundingBox
+              radial softening #000 outward. Phase alpha lives on the
+              elements' opacity, so these are static. */}
+        <radialGradient id="blob-specular-grad">
+          {SPEC_STOPS.map((factor, i) => (
+            <stop
+              key={i}
+              offset={`${(i / (SPEC_STOPS.length - 1)) * 100}%`}
+              stopColor={SPEC_COLOR}
+              stopOpacity={SPEC_PEAK * factor}
+            />
+          ))}
+        </radialGradient>
         <linearGradient
-          id="blob-sheen"
+          id="blob-rim-key"
           gradientUnits="userSpaceOnUse"
-          x1="0"
-          y1="0"
-          x2="200"
-          y2="200"
+          x1={RIM_KEY_X1}
+          y1={RIM_KEY_Y1}
+          x2={RIM_KEY_X2}
+          y2={RIM_KEY_Y2}
         >
-          <stop offset="0%" stopColor="rgb(129 183 211)" stopOpacity={sheenPeak} />
-          <stop offset="60%" stopColor="rgb(129 183 211)" stopOpacity="0" />
+          <stop offset="0%" stopColor={RIM_KEY_COLOR} stopOpacity={RIM_KEY_PEAK} />
+          <stop offset={`${RIM_KEY_FADE * 100}%`} stopColor={RIM_KEY_COLOR} stopOpacity="0" />
+          <stop offset="100%" stopColor={RIM_KEY_COLOR} stopOpacity="0" />
         </linearGradient>
+        <linearGradient
+          id="blob-rim-bounce"
+          gradientUnits="userSpaceOnUse"
+          x1={RIM_KEY_X2}
+          y1={RIM_KEY_Y2}
+          x2={RIM_KEY_X1}
+          y2={RIM_KEY_Y1}
+        >
+          <stop offset="0%" stopColor={RIM_BOUNCE_COLOR} stopOpacity={RIM_BOUNCE_PEAK} />
+          <stop offset={`${RIM_BOUNCE_FADE * 100}%`} stopColor={RIM_BOUNCE_COLOR} stopOpacity="0" />
+          <stop offset="100%" stopColor={RIM_BOUNCE_COLOR} stopOpacity="0" />
+        </linearGradient>
+        <radialGradient id="blob-shadow">
+          {SHADOW_STOPS.map(([offset, factor]) => (
+            <stop
+              key={offset}
+              offset={`${offset * 100}%`}
+              stopColor="#000000"
+              stopOpacity={SHADOW_ALPHA * factor}
+            />
+          ))}
+        </radialGradient>
       </defs>
+
+      {/* Contact shadow: soft black ellipse under the blob, offset away from
+            the light. Sits BEFORE the halo group (behind everything) and
+            outside the clip. Radial-gradient fade — no blur filter. The root
+            svg has overflow: visible so it is not cut by the viewBox.
+            SHADOW_ALPHA = 0 skips it entirely. */}
+      {SHADOW_ALPHA > 0 && (
+        <ellipse
+          cx={SHADOW_CX}
+          cy={SHADOW_CY}
+          rx={SHADOW_RX}
+          ry={SHADOW_RY}
+          fill="url(#blob-shadow)"
+        />
+      )}
 
       {/* Halo output; wrapped so the whole glow can drift toward the cursor.
             The path's d/fill are still owned by the physics loop. */}
@@ -842,14 +987,16 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       </g>
 
       {/* Grain field, inside the blob silhouette. Flat black base, then the
-            drifting dark-gray radial gradients, then the fine grain tile, then
-            the directional veil: subtle light plays across the surface and is
-            veiled toward the bottom-right, but the veil stops short of pure
-            black so grain survives everywhere. The inner edge sheen <use>
-            re-draws the same silhouette as a static stroke, clipped so only
-            its inner half shows — a soft rim light that follows the morph for
-            free. All content is static or CSS-animated (pure translate); the
-            opacities are phase-linked React props, not per-frame writes. */}
+            drifting dark-gray radial gradients, then the 3D specular sheen,
+            then the fine grain tile, then the directional veil: subtle light
+            plays across the surface and is veiled toward the bottom-right,
+            but the veil stops short of pure black so grain survives
+            everywhere. Two rim <use> re-draw the same silhouette as static
+            strokes, clipped so only their inner halves show — a key rim on
+            the lit side and a violet bounce on the shadow side, both following
+            the morph for free. All content is static or CSS-animated (pure
+            translate); the opacities are phase-linked React props, not
+            per-frame writes. */}
       <g clipPath="url(#blob-mesh-clip)">
         <rect width="200" height="200" fill="#000000" />
         {MESH_GRAY_CIRCLES.map((c, i) => (
@@ -870,14 +1017,44 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             }
           />
         ))}
+        {/* Specular sheen: an ellipse offset toward the light and rotated to
+              its angle, its objectBoundingBox radial gradient fading to 0 by
+              the edge. The outer <g> carries only a CSS transform so the
+              cursor-driven shift (LIGHT_FOLLOWS_CURSOR) eases via
+              transition; the inner <g> holds the static SVG-attribute
+              rotate/translate in user units. opacity is a render value. */}
+        <g
+          ref={specularShiftRef}
+          style={{ transform: "translate(0px, 0px)", transition: LIGHT_CURSOR_TRANSITION }}
+        >
+          <g transform={`translate(${SPEC_CENTER_X - 100} ${SPEC_CENTER_Y - 100}) rotate(${LIGHT_ANGLE_DEG} 100 100)`}>
+            <ellipse
+              cx="100"
+              cy="100"
+              rx={SPEC_RX}
+              ry={SPEC_RY}
+              fill="url(#blob-specular-grad)"
+              opacity={specOpacity}
+            />
+          </g>
+        </g>
         <rect width="200" height="200" fill="url(#blob-grain)" opacity={grainOpacity} />
         <rect width="200" height="200" fill="url(#blob-veil)" />
         <use
-          id="blob-sheen-use"
+          id="blob-rim-key"
           href="#blob-core-path"
           fill="none"
-          stroke="url(#blob-sheen)"
-          strokeWidth={GRAIN_SHEEN_STROKE_WIDTH}
+          stroke="url(#blob-rim-key)"
+          strokeWidth={RIM_KEY_STROKE_WIDTH}
+          opacity={rimOpacity}
+        />
+        <use
+          id="blob-rim-bounce"
+          href="#blob-core-path"
+          fill="none"
+          stroke="url(#blob-rim-bounce)"
+          strokeWidth={RIM_BOUNCE_STROKE_WIDTH}
+          opacity={rimOpacity}
         />
       </g>
 
