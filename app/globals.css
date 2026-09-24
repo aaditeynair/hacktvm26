@@ -769,6 +769,34 @@ body::after {
     0 0 42px rgba(92, 111, 199, 0.18);
 }
 
+/* ---------- Blob gray drift ----------
+   Slow tonal movement for the dark-gray gradient circles inside the blob.
+   Pure translate only (compositor-friendly; no filters/masks), driven by
+   per-circle CSS vars (--gray-dur / --gray-tx / --gray-ty) set from the
+   MESH_GRAY_CIRCLES constants in BlobMorph. Reduced motion: static. */
+.blob-gray-drift {
+  animation: blob-gray-drift var(--gray-dur, 24s) ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes blob-gray-drift {
+  from {
+    transform: translate(
+      calc(var(--gray-tx, 0px) * -1),
+      calc(var(--gray-ty, 0px) * -1)
+    );
+  }
+  to {
+    transform: translate(var(--gray-tx, 0px), var(--gray-ty, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blob-gray-drift {
+    animation: none;
+  }
+}
+
 /* ---------- Screen Reader Only ---------- */
 .sr-only {
   position: absolute;

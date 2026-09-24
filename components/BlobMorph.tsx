@@ -134,23 +134,54 @@ const MESH_SETTLE_START = 0.55;            // begin calming before shape lock
 const MESH_SETTLE_END = KEY_RIGID_PROGRESS; // fully calm once key is rigid
 
 /* --- Blob film grain (visual layer only) --------------------------------
-   TWO static grain layers + a directional veil + a soft inner sheen, all
+   A single soft grain layer + a directional veil + a soft inner sheen, all
    clipped to the blob silhouette. Not filters, not animated, not per-frame:
-   static <pattern>+<rect> pairs feeding phase-linked opacities (React render
-   values). Tiles: public/blob-grain.png (~20-25% density, cool off-white
-   specks, sparkle tail to 0.85) and public/blob-grain-coarse.png (~4%
-   density, soft violet clumps). Strength lerps the *_ALIVE -> *_CALM constants
-   with the mesh settle; the lerped view opacity is clamped to SVG's 0..1
-   range so the whole fade is visible across the settle. Static, so reduced
-   motion needs no special case. */
+   a static <pattern>+<rect> feeding a phase-linked opacity (React render
+   value). Tile: public/blob-grain.png (soft neutral-gray film grain, ~40%
+   density, alpha ~0.25). Strength lerps GRAIN_ALIVE -> GRAIN_CALM with the
+   mesh settle; the lerped view opacity is clamped to SVG's 0..1 range.
+   Static, so reduced motion needs no special case. */
 const GRAIN_ALIVE = 1;
 const GRAIN_CALM = 0.35;
 const GRAIN_TILE_PX = 256; // tile edge in px (density lives in the tile itself)
 
-/* Coarse clump layer: faint violet dust read between the fine texels.
-   Sits under the fine grain and nearly vanishes in the calm state. */
-const COARSE_ALIVE = 1;
-const COARSE_CALM = 0.2;
+/* --- Drifting dark-gray gradients (visual layer only) -------------------
+   Broad, soft tonal shifts riding under the grain, like light moving across
+   a matte surface. Pure-translate CSS animation only (no filters/masks);
+   each circle carries its own duration + travel via CSS custom props, and
+   its phase-linked opacity from React (per-circle, avoiding a group blur
+   layer). MESH_GRAY_ALIVE -> MESH_GRAY_CALM with the mesh settle, so the key
+   resolves on near-pure black. Peak stop alphas are tuned to the luminance
+   budget (see measure notes); the largest circle gets the higher peak. */
+const MESH_GRAY_ALIVE = 1;
+const MESH_GRAY_CALM = 0.1;
+const MESH_GRAY_COLOR = "#2b2b31"; // peak gray, very slight cool lean
+/* Eased radial falloff (offset, factor-of-peak) — 6 stops so no ring/edge. */
+const MESH_GRAY_STOPS: ReadonlyArray<readonly [number, number]> = [
+  [0, 1],
+  [0.22, 0.72],
+  [0.42, 0.48],
+  [0.62, 0.26],
+  [0.82, 0.1],
+  [1, 0],
+];
+/* cx, cy, r (viewBox units), peak stop alpha, animation duration (s), and
+   per-axis travel (viewBox units each way). */
+const MESH_GRAY_CIRCLES: ReadonlyArray<{
+  readonly cx: number;
+  readonly cy: number;
+  readonly r: number;
+  readonly peak: number;
+  readonly dur: number;
+  readonly tx: number;
+  readonly ty: number;
+}> = [
+  { cx: 100, cy: 100, r: 95, peak: 0.54, dur: 24, tx: 13, ty: -11 },
+  { cx: 58, cy: 132, r: 78, peak: 0.36, dur: 29, tx: -12, ty: 12 },
+  { cx: 142, cy: 58, r: 72, peak: 0.36, dur: 32, tx: 12, ty: -14 },
+];
+/* CSS class used for the drift animation (defined in globals.css). */
+const MESH_GRAY_DRIFT_CLASS = "blob-gray-drift";
 
 /* Directional veil: linearGradient in objectBoundingBox units (0..1),
    transparent until GRAIN_VEIL_START_RAMP along the diagonal, ramping to
@@ -672,12 +703,11 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   }, []);
 
   /* Phase-linked intensities: lerp the *_ALIVE -> *_CALM constants with the
-     mesh settle, clamped to SVG's 0..1 opacity range so the whole fade is
-     visible (never pegged at 1). React render values only — never written
-     from the tick. */
+     mesh settle, clamped to SVG's 0..1 opacity range. React render values
+     only — never written from the tick. */
   const meshSettle = computeMeshSettle(progress);
   const grainOpacity = Math.min(1, Math.max(0, GRAIN_ALIVE + (GRAIN_CALM - GRAIN_ALIVE) * meshSettle));
-  const coarseOpacity = Math.min(1, Math.max(0, COARSE_ALIVE + (COARSE_CALM - COARSE_ALIVE) * meshSettle));
+  const grayOpacity = Math.min(1, Math.max(0, MESH_GRAY_ALIVE + (MESH_GRAY_CALM - MESH_GRAY_ALIVE) * meshSettle));
   const sheenPeak = GRAIN_SHEEN_PEAK_ALIVE + (GRAIN_SHEEN_PEAK_CALM - GRAIN_SHEEN_PEAK_ALIVE) * meshSettle;
 
   return (
@@ -737,7 +767,31 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           <stop offset={`${GRAIN_VEIL_START_RAMP * 100}%`} stopColor="#000000" stopOpacity="0" />
           <stop offset="100%" stopColor="#000000" stopOpacity={GRAIN_VEIL_MAX_OPACITY} />
         </linearGradient>
-        {/* Static film-grain tiles, sized in user units so each texel is
+        {/* Drifting dark-gray radial gradients: broad soft tonal fields
+              under the grain, one per circle in MESH_GRAY_CIRCLES. Eased 6-stop
+              falloff to fully transparent at the edge (no ring), peak per
+              circle tuned to the luminance budget. Plain gradients — no
+              filters or masks. */}
+        {MESH_GRAY_CIRCLES.map((c, i) => (
+          <radialGradient
+            key={c.cx}
+            id={`blob-gray-${i + 1}`}
+            gradientUnits="userSpaceOnUse"
+            cx={c.cx}
+            cy={c.cy}
+            r={c.r}
+          >
+            {MESH_GRAY_STOPS.map(([offset, factor]) => (
+              <stop
+                key={offset}
+                offset={`${offset * 100}%`}
+                stopColor={MESH_GRAY_COLOR}
+                stopOpacity={c.peak * factor}
+              />
+            ))}
+          </radialGradient>
+        ))}
+        {/* Static film-grain tile, sized in user units so each texel is
               exactly 1 DEVICE pixel: tileUnits = 256 * 200 / (blobPx * dpr)
               (see grainTileUnits). patternUnits="userSpaceOnUse" pins the
               tile size to the 200-unit viewBox, not the 0..1 box. Default
@@ -751,19 +805,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         >
           <image
             href="/blob-grain.png"
-            width={grainTileUnits}
-            height={grainTileUnits}
-            preserveAspectRatio="none"
-          />
-        </pattern>
-        <pattern
-          id="blob-grain-coarse"
-          patternUnits="userSpaceOnUse"
-          width={grainTileUnits}
-          height={grainTileUnits}
-        >
-          <image
-            href="/blob-grain-coarse.png"
             width={grainTileUnits}
             height={grainTileUnits}
             preserveAspectRatio="none"
@@ -801,17 +842,34 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       </g>
 
       {/* Grain field, inside the blob silhouette. Flat black base, then the
-            coarse clump layer, then the fine grain tile, then the directional
-            veil: texture is strongest top-left and veiled toward the
-            bottom-right, but the veil stops short of pure black so grain
-            survives everywhere. The inner edge sheen <use> re-draws the same
-            silhouette as a static stroke, clipped so only its inner half
-            shows — a soft rim light that follows the morph for free. All
-            static content; only the opacities are phase-linked (React props,
-            not per-frame). */}
+            drifting dark-gray radial gradients, then the fine grain tile, then
+            the directional veil: subtle light plays across the surface and is
+            veiled toward the bottom-right, but the veil stops short of pure
+            black so grain survives everywhere. The inner edge sheen <use>
+            re-draws the same silhouette as a static stroke, clipped so only
+            its inner half shows — a soft rim light that follows the morph for
+            free. All content is static or CSS-animated (pure translate); the
+            opacities are phase-linked React props, not per-frame writes. */}
       <g clipPath="url(#blob-mesh-clip)">
         <rect width="200" height="200" fill="#000000" />
-        <rect width="200" height="200" fill="url(#blob-grain-coarse)" opacity={coarseOpacity} />
+        {MESH_GRAY_CIRCLES.map((c, i) => (
+          <circle
+            key={c.cx}
+            className={MESH_GRAY_DRIFT_CLASS}
+            cx={c.cx}
+            cy={c.cy}
+            r={c.r}
+            fill={`url(#blob-gray-${i + 1})`}
+            opacity={grayOpacity}
+            style={
+              {
+                "--gray-dur": `${c.dur}s`,
+                "--gray-tx": `${c.tx}px`,
+                "--gray-ty": `${c.ty}px`,
+              } as React.CSSProperties
+            }
+          />
+        ))}
         <rect width="200" height="200" fill="url(#blob-grain)" opacity={grainOpacity} />
         <rect width="200" height="200" fill="url(#blob-veil)" />
         <use
