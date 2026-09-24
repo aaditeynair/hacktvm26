@@ -137,12 +137,13 @@ const MESH_SETTLE_END = KEY_RIGID_PROGRESS; // fully calm once key is rigid
    A single soft grain layer + a directional veil + a soft inner sheen, all
    clipped to the blob silhouette. Not filters, not animated, not per-frame:
    a static <pattern>+<rect> feeding a phase-linked opacity (React render
-   value). Tile: public/blob-grain.png (soft neutral-gray film grain, ~40%
-   density, alpha ~0.25). Strength lerps GRAIN_ALIVE -> GRAIN_CALM with the
+   value). Tile: public/blob-grain.png (soft neutral-gray film grain, ~36%
+   ink coverage; measured mean added luminance ~7.6/255 at full opacity).
+   Strength lerps GRAIN_ALIVE -> GRAIN_CALM with the
    mesh settle; the lerped view opacity is clamped to SVG's 0..1 range.
    Static, so reduced motion needs no special case. */
-const GRAIN_ALIVE = 1;
-const GRAIN_CALM = 0.35;
+const GRAIN_ALIVE = 0.75;
+const GRAIN_CALM = 0.3;
 const GRAIN_TILE_PX = 256; // tile edge in px (density lives in the tile itself)
 
 /* --- Drifting dark-gray gradients (visual layer only) -------------------
@@ -153,7 +154,7 @@ const GRAIN_TILE_PX = 256; // tile edge in px (density lives in the tile itself)
    layer). MESH_GRAY_ALIVE -> MESH_GRAY_CALM with the mesh settle, so the key
    resolves on near-pure black. Peak stop alphas are tuned to the luminance
    budget (see measure notes); the largest circle gets the higher peak. */
-const MESH_GRAY_ALIVE = 1;
+const MESH_GRAY_ALIVE = 0.5;
 const MESH_GRAY_CALM = 0.1;
 const MESH_GRAY_COLOR = "#2b2b31"; // peak gray, very slight cool lean
 /* Eased radial falloff (offset, factor-of-peak) — 6 stops so no ring/edge. */
@@ -214,13 +215,13 @@ const LIGHT_ANGLE_DEG = (Math.atan2(LIGHT_DY, LIGHT_DX) * 180) / Math.PI;
 /* Specular sheen: an ellipse (rx vs ry) offset toward the light, its major
    axis turned to follow the light angle. Filled with an objectBoundingBox
    radial gradient so the stop falloff matches the rotated ellipse exactly.
-   Peak alpha ~0.13; 8 eased stops -> 0 at the edge. */
+   Peak alpha ~0.08; 8 eased stops -> 0 at the edge. */
 const SPEC_OFFSET = 27.5; // center offset toward the light (viewBox units)
 const SPEC_CENTER_X = 100 + LIGHT_DX * SPEC_OFFSET;
 const SPEC_CENTER_Y = 100 + LIGHT_DY * SPEC_OFFSET;
 const SPEC_RX = 60;
 const SPEC_RY = 45;
-const SPEC_PEAK = 0.13;
+const SPEC_PEAK = 0.08;
 const SPEC_COLOR = "rgb(190 205 255)";
 const SPEC_STOPS: ReadonlyArray<number> = [1, 0.88, 0.74, 0.58, 0.44, 0.28, 0.12, 0];
 const SPEC_ALIVE = 1;
@@ -246,10 +247,21 @@ const RIM_CALM = 0.55;
 
 /* Contact shadow: a soft black ellipse under the blob, offset away from the
    light. No blur filter — a radialGradient fade baked into the ellipse.
-   SHADOW_ALPHA = 0 disables it. Constant (not phase-linked). */
-const SHADOW_ALPHA = 0.35;
-const SHADOW_CX = 106; // ~+6, away from the light
-const SHADOW_CY = 178; // ~+78, below the blob
+   Follows the morph: the tick folds min/maxX/maxY out of the point loop, then
+   lerps cx/cy/rx/ry toward targets derived from the silhouette bounds, and
+   fades out with the key resolve (fluidityFactor -> 0). SHADOW_ALPHA = 0 or
+   SHADOW_ALPHA_SCALE = 0 disables it entirely; SHADOW_CX/CY/RX/RY seed the
+   initial render so first paint matches the old static position. */
+const SHADOW_ALPHA = 0.35; // gradient peak opacity (unchanged)
+const SHADOW_ALPHA_SCALE = 1; // master multiplier; 0 disables the shadow
+const SHADOW_WIDTH_FACTOR = 0.95; // rx = silhouette half-width * this
+const SHADOW_ASPECT = 0.17; // ry = rx * this
+const SHADOW_GAP = 14; // cy = bottom of silhouette + this
+const SHADOW_OFFSET_X = 6; // cx = silhouette midpoint + this (away from light)
+const SHADOW_LERP = 0.12; // per-frame smoothing of the dynamic position
+const SHADOW_WRITE_THRESHOLD = 0.01; // skip DOM writes below this delta
+const SHADOW_CX = 106; // initial seed, ~+6, away from the light
+const SHADOW_CY = 178; // initial seed, ~+78, below the blob
 const SHADOW_RX = 70;
 const SHADOW_RY = 12;
 const SHADOW_STOPS: ReadonlyArray<readonly [number, number]> = [
@@ -336,6 +348,12 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const haloShiftRef = useRef<SVGGElement>(null);
   const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
   const specularShiftRef = useRef<SVGGElement>(null);
+  const shadowRef = useRef<SVGEllipseElement>(null);
+  /* Shadow smoothing state (plain refs — never cloned into render state).
+     `shadowSmoothedRef` holds the lerped position; `shadowWrittenRef` the last
+     value pushed to the DOM so setAttribute is skipped below the threshold. */
+  const shadowSmoothedRef = useRef({ cx: SHADOW_CX, cy: SHADOW_CY, rx: SHADOW_RX, ry: SHADOW_RY });
+  const shadowWrittenRef = useRef({ cx: SHADOW_CX, cy: SHADOW_CY, rx: SHADOW_RX, ry: SHADOW_RY });
   const logoImageRef = useRef<SVGImageElement>(null); // fallback, kept for graceful degradation
 
   const [detailShapes, setDetailShapes] = useState<DetailShape[] | null>(null);
@@ -694,6 +712,14 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       const points: { x: number; y: number }[] = [];
       const targetRadii = targetRadiiRef.current;
 
+      /* Contact-shadow silhouette bounds, folded into the existing point loop
+         (one pass, zero allocations, few extra ops) — skipped entirely when
+         the shadow is disabled. */
+      const trackShadow = SHADOW_ALPHA > 0 && SHADOW_ALPHA_SCALE > 0;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
       for (let i = 0; i < NUM_POINTS; i++) {
         const angle = (i / NUM_POINTS) * Math.PI * 2;
         const cosA = Math.cos(angle);
@@ -707,11 +733,65 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         const idleRadius = baseMorphRadius + n * idleAmplitude;
 
         const finalRadius = idleRadius + smoothedOffsets[i];
+        const px = CANVAS_CENTER + finalRadius * cosA;
+        const py = CANVAS_CENTER + finalRadius * sinA;
 
-        points.push({
-          x: CANVAS_CENTER + finalRadius * cosA,
-          y: CANVAS_CENTER + finalRadius * sinA,
-        });
+        if (trackShadow) {
+          if (px < minX) minX = px;
+          if (px > maxX) maxX = px;
+          if (py > maxY) maxY = py;
+        }
+
+        points.push({ x: px, y: py });
+      }
+
+      /* Contact shadow follows the morph: targets derived from the silhouette
+         bounds above, positions lerped via a ref (no allocations), written to
+         the ellipse only when they drift past the threshold. Reduced motion
+         snaps. Opacity fades out with the key resolve (fluidity -> 0) so no
+         floor shadow lingers under the resolved key. */
+      if (trackShadow && shadowRef.current) {
+        const s = shadowSmoothedRef.current;
+        const w = shadowWrittenRef.current;
+        const el = shadowRef.current;
+
+        const targetCx = (minX + maxX) / 2 + SHADOW_OFFSET_X;
+        const targetRx = ((maxX - minX) / 2) * SHADOW_WIDTH_FACTOR;
+        const targetCy = maxY + SHADOW_GAP;
+        const targetRy = targetRx * SHADOW_ASPECT;
+
+        if (reducedMotionRef.current) {
+          s.cx = targetCx;
+          s.rx = targetRx;
+          s.cy = targetCy;
+          s.ry = targetRy;
+        } else {
+          s.cx += (targetCx - s.cx) * SHADOW_LERP;
+          s.rx += (targetRx - s.rx) * SHADOW_LERP;
+          s.cy += (targetCy - s.cy) * SHADOW_LERP;
+          s.ry += (targetRy - s.ry) * SHADOW_LERP;
+        }
+
+        if (Math.abs(s.cx - w.cx) > SHADOW_WRITE_THRESHOLD) {
+          el.setAttribute("cx", s.cx.toFixed(2));
+          w.cx = s.cx;
+        }
+        if (Math.abs(s.rx - w.rx) > SHADOW_WRITE_THRESHOLD) {
+          el.setAttribute("rx", s.rx.toFixed(2));
+          w.rx = s.rx;
+        }
+        if (Math.abs(s.cy - w.cy) > SHADOW_WRITE_THRESHOLD) {
+          el.setAttribute("cy", s.cy.toFixed(2));
+          w.cy = s.cy;
+        }
+        if (Math.abs(s.ry - w.ry) > SHADOW_WRITE_THRESHOLD) {
+          el.setAttribute("ry", s.ry.toFixed(2));
+          w.ry = s.ry;
+        }
+
+        el.style.opacity = String(
+          Math.min(1, fluidityFactor / 0.8) * SHADOW_ALPHA_SCALE
+        );
       }
 
       const dString = buildSmoothPath(points);
@@ -959,10 +1039,13 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       {/* Contact shadow: soft black ellipse under the blob, offset away from
             the light. Sits BEFORE the halo group (behind everything) and
             outside the clip. Radial-gradient fade — no blur filter. The root
-            svg has overflow: visible so it is not cut by the viewBox.
-            SHADOW_ALPHA = 0 skips it entirely. */}
-      {SHADOW_ALPHA > 0 && (
+            svg has overflow: visible so it is not cut by the viewBox. The
+            tick follows the morph and fades it out; the static attrs below are
+            only the first-paint seed. SHADOW_ALPHA = 0 or SHADOW_ALPHA_SCALE
+            = 0 skips it entirely. */}
+      {SHADOW_ALPHA > 0 && SHADOW_ALPHA_SCALE > 0 && (
         <ellipse
+          ref={shadowRef}
           cx={SHADOW_CX}
           cy={SHADOW_CY}
           rx={SHADOW_RX}
