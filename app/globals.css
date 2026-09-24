@@ -769,63 +769,6 @@ body::after {
     0 0 42px rgba(92, 111, 199, 0.18);
 }
 
-/* ---------- Blob Mesh Gradient (visual layer only) ----------
-   Two soft radial blobs drifting inside the blob silhouette. Pure translate
-   transforms (compositor-only; no extra filter pass). Amplitudes + periods
-   come from CSS vars set by BlobMorph's render: they shrink/lengthen as the
-   key resolves so the field settles into a calm, near-static state. Reduced
-   motion: amps are zeroed in-render and the global reduced-motion rule zeroes
-   duration, so the field is completely static.
-   ------------------------------------------------------------------------- */
-.mesh-drift {
-  will-change: transform;
-  transform-box: fill-box;
-}
-
-.mesh-drift-a {
-  animation: mesh-drift-a var(--mesh-dur-a, 11s) ease-in-out infinite alternate;
-}
-
-.mesh-drift-b {
-  animation: mesh-drift-b var(--mesh-dur-b, 7s) ease-in-out infinite alternate;
-}
-
-@keyframes mesh-drift-a {
-  from {
-    transform: translate(
-      calc(var(--mesh-amp-ax, 0px) * -1),
-      calc(var(--mesh-amp-ay, 0px) * -1)
-    );
-  }
-  to {
-    transform: translate(
-      var(--mesh-amp-ax, 0px),
-      var(--mesh-amp-ay, 0px)
-    );
-  }
-}
-
-@keyframes mesh-drift-b {
-  from {
-    transform: translate(
-      var(--mesh-amp-bx, 0px),
-      calc(var(--mesh-amp-by, 0px) * -1)
-    );
-  }
-  to {
-    transform: translate(
-      calc(var(--mesh-amp-bx, 0px) * -1),
-      var(--mesh-amp-by, 0px)
-    );
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mesh-drift {
-    animation: none;
-  }
-}
-
 /* ---------- Screen Reader Only ---------- */
 .sr-only {
   position: absolute;

@@ -133,28 +133,30 @@ export const KEY_VISUAL_ID = "key-visual";
 const MESH_SETTLE_START = 0.55;            // begin calming before shape lock
 const MESH_SETTLE_END = KEY_RIGID_PROGRESS; // fully calm once key is rigid
 
-const MESH_ALIVE = { baseHi: "#141414", baseLo: "#090909", blobA: "#343434", blobB: "#474747" };
-const MESH_CALM  = { baseHi: "#0A0A0A", baseLo: "#030303", blobA: "#1A1A1A", blobB: "#242424" };
+/* --- Blob film grain (visual layer only) --------------------------------
+   Sparse, fine, filmic grain clipped to the blob silhouette. Not a filter,
+   not animated, not per-frame — a static <pattern>+<rect> (tile
+   public/blob-grain.png: alpha-based, ~20% density, cool off-white specks,
+   no tinted fill) followed by a static directional veil <rect> that fades it
+   to pure black toward the bottom-right, like light catching a matte surface.
+   Grain strength lerps GRAIN_ALIVE -> GRAIN_CALM with the mesh settle (React
+   render value). Static, so reduced motion needs no special case. */
+const GRAIN_ALIVE = 0.55;
+const GRAIN_CALM = 0.25;
+const GRAIN_TILE_PX = 256; // tile edge in px (density lives in the tile itself)
 
-const MESH_AMP_AX = 7;   // first-blob drift amplitude (viewBox px)
-const MESH_AMP_AY = 5;
-const MESH_AMP_BX = 10;
-const MESH_AMP_BY = 8;
-const MESH_DUR_A = 11;   // drift periods in seconds (alive)
-const MESH_DUR_B = 7;
+/* Directional veil: linearGradient in objectBoundingBox units (0..1),
+   fully transparent at the top-left, ramping to #000000 at
+   GRAIN_VEIL_MAX_OPACITY toward the bottom-right. */
+const GRAIN_VEIL_X1 = 0;
+const GRAIN_VEIL_Y1 = 0;
+const GRAIN_VEIL_X2 = 1;
+const GRAIN_VEIL_Y2 = 1;
+const GRAIN_VEIL_MAX_OPACITY = 0.9;
 
 function computeMeshSettle(p: number): number {
   const t = Math.min(1, Math.max(0, (p - MESH_SETTLE_START) / (MESH_SETTLE_END - MESH_SETTLE_START)));
   return t * t * (3 - 2 * t);
-}
-
-function mixHex(a: string, b: string, t: number): string {
-  const pa = parseInt(a.slice(1), 16);
-  const pb = parseInt(b.slice(1), 16);
-  const r = Math.round(((pa >> 16) & 255) + (((pb >> 16) & 255) - ((pa >> 16) & 255)) * t);
-  const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * t);
-  const bl = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * t);
-  return `rgb(${r}, ${g}, ${bl})`;
 }
 
 function computeFluidity(p: number): number {
@@ -251,11 +253,46 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
      shift + intensity boost. Written from the tick, never the physics math. */
   const haloProximityRef = useRef(0);
 
+  /* Grain pattern tile size in SVG user units, so each texel is ~1 DEVICE
+     pixel at every breakpoint/DPR. The SVG viewBox is 200 units wide mapped
+     to --blob-size CSS px, so tileUnits = 256 * 200 / (blobSizePx * dpr).
+     Measured with a ResizeObserver OUTSIDE the rAF tick (state, not a
+     per-frame write); also re-measured on devicePixelRatio changes. */
+  const [grainTileUnits, setGrainTileUnits] = useState(
+    (GRAIN_TILE_PX * 200) / (680 * 2)
+  );
+
   const { isReducedMotion } = useApp();
   const reducedMotionRef = useRef(isReducedMotion);
   useEffect(() => {
     reducedMotionRef.current = isReducedMotion;
   }, [isReducedMotion]);
+
+  /* Grain tile sizing effect — ResizeObserver on the svg element + a
+     devicePixelRatio matchMedia listener, both outside the tick. No per-frame
+     reads/writes: only runs when the blob box or DPR changes. */
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const update = () => {
+      const rect = svg.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      if (rect.width > 0 && dpr > 0) {
+        setGrainTileUnits((GRAIN_TILE_PX * 200) / (rect.width * dpr));
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(svg);
+    const dprMedia = window.matchMedia(
+      `(resolution: ${window.devicePixelRatio}dppx)`
+    );
+    dprMedia.addEventListener?.("change", update);
+    return () => {
+      ro.disconnect();
+      dprMedia.removeEventListener?.("change", update);
+    };
+  }, []);
 
   const cursorRef = useRef<{ x: number; y: number; active: boolean }>({
     x: -9999,
@@ -616,24 +653,10 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     };
   }, []);
 
-  /* Mesh-gradient settle + drift values. Color/tempo read from `progress`
-     only; the drain drift is killed for reduced motion (static field).
-     Amplitudes are emitted through CSS vars so the running keyframe
-     animations slow/close in live as the key resolves. */
+  /* Phase-linked grain intensity: lerp GRAIN_ALIVE -> GRAIN_CALM with the
+     mesh settle. React render value only — never written from the tick. */
   const meshSettle = computeMeshSettle(progress);
-  const meshScale = isReducedMotion ? 0 : 1 - meshSettle;
-  const meshBaseHi = mixHex(MESH_ALIVE.baseHi, MESH_CALM.baseHi, meshSettle);
-  const meshBaseLo = mixHex(MESH_ALIVE.baseLo, MESH_CALM.baseLo, meshSettle);
-  const meshColorA = mixHex(MESH_ALIVE.blobA, MESH_CALM.blobA, meshSettle);
-  const meshColorB = mixHex(MESH_ALIVE.blobB, MESH_CALM.blobB, meshSettle);
-  const meshVars = {
-    "--mesh-amp-ax": `${MESH_AMP_AX * meshScale}px`,
-    "--mesh-amp-ay": `${MESH_AMP_AY * meshScale}px`,
-    "--mesh-amp-bx": `${MESH_AMP_BX * meshScale}px`,
-    "--mesh-amp-by": `${MESH_AMP_BY * meshScale}px`,
-    "--mesh-dur-a": `${MESH_DUR_A + meshSettle * 30}s`,
-    "--mesh-dur-b": `${MESH_DUR_B + meshSettle * 24}s`,
-  } as React.CSSProperties;
+  const grainOpacity = GRAIN_ALIVE + (GRAIN_CALM - GRAIN_ALIVE) * meshSettle;
 
   return (
     <svg
@@ -669,26 +692,45 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             </feMerge>
           </filter>
 
-          {/* Blob mesh gradient: clipped to the physics-written core silhouette
-              via <use> (svg 1.1 allows it), so it always stays in sync with the
-              morph without a second path being written by the loop. */}
+          {/* Grain clip: re-uses the physics-written core silhouette via <use>, so
+              the grain + veil always stay in sync with the morph without a
+              second path being written by the loop. */}
           <clipPath id="blob-mesh-clip">
             <use href="#blob-core-path" />
           </clipPath>
-          <radialGradient id="mesh-base" cx="40%" cy="38%" r="75%">
-            <stop offset="0%" stopColor={meshBaseHi} stopOpacity="1" />
-            <stop offset="100%" stopColor={meshBaseLo} stopOpacity="1" />
-          </radialGradient>
-          <radialGradient id="mesh-blob-a" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={meshColorA} stopOpacity="0.5" />
-            <stop offset="62%" stopColor={meshColorA} stopOpacity="0.2" />
-            <stop offset="100%" stopColor={meshColorA} stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id="mesh-blob-b" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={meshColorB} stopOpacity="0.34" />
-            <stop offset="70%" stopColor={meshColorB} stopOpacity="0.12" />
-            <stop offset="100%" stopColor={meshColorB} stopOpacity="0" />
-          </radialGradient>
+          {/* Directional veil gradient: transparent top-left -> #000000 at
+              GRAIN_VEIL_MAX_OPACITY bottom-right (objectBoundingBox units).
+              Static; a plain gradient, not a filter or mask. */}
+          <linearGradient
+            id="blob-veil"
+            gradientUnits="objectBoundingBox"
+            x1={GRAIN_VEIL_X1}
+            y1={GRAIN_VEIL_Y1}
+            x2={GRAIN_VEIL_X2}
+            y2={GRAIN_VEIL_Y2}
+          >
+            <stop offset="0%" stopColor="#000000" stopOpacity="0" />
+            <stop offset="100%" stopColor="#000000" stopOpacity={GRAIN_VEIL_MAX_OPACITY} />
+          </linearGradient>
+          {/* Static film-grain tile, sized in user units so each texel is
+              exactly 1 DEVICE pixel: tileUnits = 256 * 200 / (blobPx * dpr)
+              (see grainTileUnits). patternUnits="userSpaceOnUse" pins the
+              tile size to the 200-unit viewBox, not the 0..1 box. Default
+              (auto) resampling — no pixelated/crisp-edges, which caused the
+              streaky look. */}
+          <pattern
+            id="blob-grain"
+            patternUnits="userSpaceOnUse"
+            width={grainTileUnits}
+            height={grainTileUnits}
+          >
+            <image
+              href="/blob-grain.png"
+              width={grainTileUnits}
+              height={grainTileUnits}
+              preserveAspectRatio="none"
+            />
+          </pattern>
         </defs>
 
         {/* Halo output; wrapped so the whole glow can drift toward the cursor.
@@ -699,13 +741,15 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
         <path ref={corePathRef} id="blob-core-path" />
 
-        {/* Mesh field, drawn over (instead of) the flat black core, only where
-            the blob silhouette is. Drift is pure translate — compositor-only.
-            Grays are concentrated where the old blue/purple accents sat. */}
-        <g clipPath="url(#blob-mesh-clip)" style={meshVars}>
-          <rect width="200" height="200" fill="url(#mesh-base)" />
-          <circle className="mesh-drift mesh-drift-a" cx="72" cy="56" r="96" fill="url(#mesh-blob-a)" />
-          <circle className="mesh-drift mesh-drift-b" cx="132" cy="144" r="84" fill="url(#mesh-blob-b)" />
+        {/* Grain field, inside the blob silhouette. Flat black base, then the
+            static grain tile, then the static directional veil: grain is
+            strongest top-left and veiled to pure black toward the bottom-right.
+            All static content; only the grain rect's opacity is phase-linked
+            (React prop, not per-frame). */}
+        <g clipPath="url(#blob-mesh-clip)">
+          <rect width="200" height="200" fill="#000000" />
+          <rect width="200" height="200" fill="url(#blob-grain)" opacity={grainOpacity} />
+          <rect width="200" height="200" fill="url(#blob-veil)" />
         </g>
 
         {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
