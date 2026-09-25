@@ -329,12 +329,6 @@ body::after {
     0 0 50px rgba(75, 46, 111, 0.25);
 }
 
-/* ---------- Blob Glow ---------- */
-.blob-glow {
-  filter: drop-shadow(0 0 15px rgba(92, 111, 199, 0.4))
-          drop-shadow(0 0 30px rgba(75, 46, 111, 0.3));
-}
-
 /* ---------- Aurora Background ----------
    Brand look (posters / social): large soft out-of-focus color fields —
    luminous light-blue accent against vivid violet + blue sweeps, deep

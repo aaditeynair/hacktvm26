@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useApp } from "@/context/AppContext";
-import { ambientColorForProgress, PHASE_COLORS } from "@/lib/theme";
 
 class SimplexNoise {
   private perm: number[] = [];
@@ -222,11 +221,11 @@ const GRAIN_VEIL_START_RAMP = 0.35;
 const GRAIN_VEIL_MAX_OPACITY = 0.55;
 
 /* --- 3D lighting (visual layer only) ------------------------------------
-   Light direction + specular highlight + key/bounce rim strokes + a contact
-   shadow. Everything is derived from LIGHT_X / LIGHT_Y (the light comes FROM
-   that direction, top-left), so tuning these two numbers moves every effect
-   consistently. Blob must stay primarily black; peaks are modest and the
-   phase lerp keeps depth visible while the gray drift + grain fade out. */
+   Light direction + specular highlight + violet bounce rim. Everything is
+   derived from LIGHT_X / LIGHT_Y (the light comes FROM that direction,
+   top-left), so tuning these two numbers moves every effect consistently.
+   Blob must stay primarily black; peaks are modest and the phase lerp keeps
+   depth visible while the gray drift + grain fade out. */
 const LIGHT_X = -0.55;
 const LIGHT_Y = -0.6;
 const LIGHT_FOLLOWS_CURSOR = true; // specular glides toward the cursor
@@ -253,52 +252,18 @@ const SPEC_STOPS: ReadonlyArray<number> = [1, 0.88, 0.74, 0.58, 0.44, 0.28, 0.12
 const SPEC_ALIVE = 1;
 const SPEC_CALM = 0.55;
 
-/* Rim strokes: two <use> of #blob-core-path stroked with gradients along the
-   light axis, clipped so only the inner halves show — a key lit-side rim and
-   a violet bounce on the shadow side. */
-const RIM_KEY_PEAK = 0.45; // lightblue on the lit side
-const RIM_KEY_STROKE_WIDTH = 4;
-const RIM_KEY_FADE = 0.55; // fully transparent by this fraction along the axis
-const RIM_KEY_COLOR = "rgb(129 183 211)";
-const RIM_KEY_X1 = 100 + LIGHT_DX * 100;
-const RIM_KEY_Y1 = 100 + LIGHT_DY * 100;
-const RIM_KEY_X2 = 100 - LIGHT_DX * 100;
-const RIM_KEY_Y2 = 100 - LIGHT_DY * 100;
+/* Rim stroke: one <use> of #blob-core-path stroked with a gradient along the
+   light axis, clipped so only the inner half shows on the bounce side. */
 const RIM_BOUNCE_PEAK = 0.22; // violet on the shadow side
 const RIM_BOUNCE_STROKE_WIDTH = 3;
 const RIM_BOUNCE_FADE = 0.5;
 const RIM_BOUNCE_COLOR = "rgb(96 61 182)";
+const RIM_BOUNCE_X1 = 100 - LIGHT_DX * 100;
+const RIM_BOUNCE_Y1 = 100 - LIGHT_DY * 100;
+const RIM_BOUNCE_X2 = 100 + LIGHT_DX * 100;
+const RIM_BOUNCE_Y2 = 100 + LIGHT_DY * 100;
 const RIM_ALIVE = 1;
 const RIM_CALM = 0.55;
-
-/* Contact shadow: a soft black ellipse under the blob, offset away from the
-   light. No blur filter — a radialGradient fade baked into the ellipse.
-   Follows the morph: the tick folds min/maxX/maxY out of the point loop, then
-   lerps cx/cy/rx/ry toward targets derived from the silhouette bounds, and
-   fades out with the key resolve (fluidityFactor -> 0). SHADOW_ALPHA = 0 or
-   SHADOW_ALPHA_SCALE = 0 disables it entirely; SHADOW_CX/CY/RX/RY seed the
-   initial render so first paint matches the old static position. */
-const SHADOW_ALPHA = 0.35; // gradient peak opacity (unchanged)
-const SHADOW_ALPHA_SCALE = 1; // master multiplier; 0 disables the shadow
-const SHADOW_WIDTH_FACTOR = 0.95; // rx = silhouette half-width * this
-const SHADOW_ASPECT = 0.17; // ry = rx * this
-const SHADOW_GAP = 14; // cy = bottom of silhouette + this
-const SHADOW_OFFSET_X = 6; // cx = silhouette midpoint + this (away from light)
-const SHADOW_LERP = 0.12; // per-frame smoothing of the dynamic position
-const SHADOW_WRITE_THRESHOLD = 0.01; // skip DOM writes below this delta
-const SHADOW_CX = 106; // initial seed, ~+6, away from the light
-const SHADOW_CY = 178; // initial seed, ~+78, below the blob
-const SHADOW_RX = 70;
-const SHADOW_RY = 12;
-const SHADOW_STOPS: ReadonlyArray<readonly [number, number]> = [
-  [0, 1],
-  [0.12, 0.96],
-  [0.25, 0.88],
-  [0.4, 0.74],
-  [0.6, 0.52],
-  [0.8, 0.24],
-  [1, 0],
-];
 
 function computeMeshSettle(p: number): number {
   const t = Math.min(1, Math.max(0, (p - MESH_SETTLE_START) / (MESH_SETTLE_END - MESH_SETTLE_START)));
@@ -325,8 +290,8 @@ function computeDetailReveal(p: number): number {
 
 /* Blob visibility: 1 while alive, fading smoothly to 0 over the tail AFTER the
    key is fully resolved (KEY_RIGID_PROGRESS -> 1), so the black silhouette and
-   its grain/lighting step aside and the resolved key (halo included) stands
-   alone. Progress-driven, not per-frame — reduced-motion safe. */
+   its grain/lighting step aside and the resolved key stands alone.
+   Progress-driven, not per-frame — reduced-motion safe. */
 function computeBlobVisibility(p: number): number {
   const t = Math.min(1, Math.max(0, (p - KEY_RIGID_PROGRESS) / (1 - KEY_RIGID_PROGRESS)));
   return 1 - t * t * (3 - 2 * t);
@@ -379,17 +344,8 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const corePathRef = useRef<SVGPathElement>(null);
-  const haloPathRef = useRef<SVGPathElement>(null);
-  const haloShiftRef = useRef<SVGGElement>(null);
-  const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
   const specularShiftRef = useRef<SVGGElement>(null);
   const meshGroupRef = useRef<SVGGElement>(null);
-  const shadowRef = useRef<SVGEllipseElement>(null);
-  /* Shadow smoothing state (plain refs — never cloned into render state).
-     `shadowSmoothedRef` holds the lerped position; `shadowWrittenRef` the last
-     value pushed to the DOM so setAttribute is skipped below the threshold. */
-  const shadowSmoothedRef = useRef({ cx: SHADOW_CX, cy: SHADOW_CY, rx: SHADOW_RX, ry: SHADOW_RY });
-  const shadowWrittenRef = useRef({ cx: SHADOW_CX, cy: SHADOW_CY, rx: SHADOW_RX, ry: SHADOW_RY });
   const logoImageRef = useRef<SVGImageElement>(null); // fallback, kept for graceful degradation
 
   const [detailShapes, setDetailShapes] = useState<DetailShape[] | null>(null);
@@ -407,15 +363,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   }, [progress]);
 
   const smoothedProgressRef = useRef(0);
-
-  /* Cached halo color so the fill is only written when it actually changes
-     (avoids a per-frame style write to the same element). */
-  const lastHaloColorRef = useRef<string | null>(null);
   const lastBlobOpacityRef = useRef<string | null>(null);
-
-  /* Smoothed cursor-proximity to the resolved key (0..1); drives the halo's
-     shift + intensity boost. Written from the tick, never the physics math. */
-  const haloProximityRef = useRef(0);
 
   /* Grain pattern tile size in SVG user units, so each texel is ~1 DEVICE
      pixel at every breakpoint/DPR. The SVG viewBox is 200 units wide mapped
@@ -427,10 +375,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   );
 
   const { isReducedMotion } = useApp();
-  const reducedMotionRef = useRef(isReducedMotion);
-  useEffect(() => {
-    reducedMotionRef.current = isReducedMotion;
-  }, [isReducedMotion]);
 
   /* Grain tile sizing effect — ResizeObserver on the svg element + a
      devicePixelRatio matchMedia listener, both outside the tick. No per-frame
@@ -682,14 +626,12 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
       let svgCenterX = window.innerWidth / 2;
       let svgCenterY = window.innerHeight / 2;
-      let blobScale = 1;
 
       if (svgRef.current) {
         const rect = svgRef.current.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
           svgCenterX = rect.left + rect.width / 2;
           svgCenterY = rect.top + rect.height / 2;
-          blobScale = rect.width / 200;
         }
       }
 
@@ -749,14 +691,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       const points: { x: number; y: number }[] = [];
       const targetRadii = targetRadiiRef.current;
 
-      /* Contact-shadow silhouette bounds, folded into the existing point loop
-         (one pass, zero allocations, few extra ops) — skipped entirely when
-         the shadow is disabled. */
-      const trackShadow = SHADOW_ALPHA > 0 && SHADOW_ALPHA_SCALE > 0;
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-
       for (let i = 0; i < NUM_POINTS; i++) {
         const angle = (i / NUM_POINTS) * Math.PI * 2;
         const cosA = Math.cos(angle);
@@ -773,67 +707,11 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         const px = CANVAS_CENTER + finalRadius * cosA;
         const py = CANVAS_CENTER + finalRadius * sinA;
 
-        if (trackShadow) {
-          if (px < minX) minX = px;
-          if (px > maxX) maxX = px;
-          if (py > maxY) maxY = py;
-        }
-
         points.push({ x: px, y: py });
-      }
-
-      /* Contact shadow follows the morph: targets derived from the silhouette
-         bounds above, positions lerped via a ref (no allocations), written to
-         the ellipse only when they drift past the threshold. Reduced motion
-         snaps. Opacity fades out with the key resolve (fluidity -> 0) so no
-         floor shadow lingers under the resolved key. */
-      if (trackShadow && shadowRef.current) {
-        const s = shadowSmoothedRef.current;
-        const w = shadowWrittenRef.current;
-        const el = shadowRef.current;
-
-        const targetCx = (minX + maxX) / 2 + SHADOW_OFFSET_X;
-        const targetRx = ((maxX - minX) / 2) * SHADOW_WIDTH_FACTOR;
-        const targetCy = maxY + SHADOW_GAP;
-        const targetRy = targetRx * SHADOW_ASPECT;
-
-        if (reducedMotionRef.current) {
-          s.cx = targetCx;
-          s.rx = targetRx;
-          s.cy = targetCy;
-          s.ry = targetRy;
-        } else {
-          s.cx += (targetCx - s.cx) * SHADOW_LERP;
-          s.rx += (targetRx - s.rx) * SHADOW_LERP;
-          s.cy += (targetCy - s.cy) * SHADOW_LERP;
-          s.ry += (targetRy - s.ry) * SHADOW_LERP;
-        }
-
-        if (Math.abs(s.cx - w.cx) > SHADOW_WRITE_THRESHOLD) {
-          el.setAttribute("cx", s.cx.toFixed(2));
-          w.cx = s.cx;
-        }
-        if (Math.abs(s.rx - w.rx) > SHADOW_WRITE_THRESHOLD) {
-          el.setAttribute("rx", s.rx.toFixed(2));
-          w.rx = s.rx;
-        }
-        if (Math.abs(s.cy - w.cy) > SHADOW_WRITE_THRESHOLD) {
-          el.setAttribute("cy", s.cy.toFixed(2));
-          w.cy = s.cy;
-        }
-        if (Math.abs(s.ry - w.ry) > SHADOW_WRITE_THRESHOLD) {
-          el.setAttribute("ry", s.ry.toFixed(2));
-          w.ry = s.ry;
-        }
-
-        el.style.opacity = String(
-          Math.min(1, fluidityFactor / 0.8) * SHADOW_ALPHA_SCALE
-        );
       }
 
       const dString = buildSmoothPath(points);
       if (corePathRef.current) corePathRef.current.setAttribute("d", dString);
-      if (haloPathRef.current) haloPathRef.current.setAttribute("d", dString);
 
       const detailReveal = computeDetailReveal(currentProgress);
 
@@ -848,52 +726,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         lastBlobOpacityRef.current = blobFadeStr;
         if (corePathRef.current) corePathRef.current.style.opacity = blobFadeStr;
         if (meshGroupRef.current) meshGroupRef.current.style.opacity = blobFadeStr;
-      }
-
-      /* Phase-linked halo color: same progress value as the morph. Reduced
-         motion snaps to the pure phase stop (no in-phase blend). Cached so a
-         fill is only written when the color actually changes. */
-      const haloColor = ambientColorForProgress(currentProgress, reducedMotionRef.current);
-      if (haloPathRef.current && haloColor !== lastHaloColorRef.current) {
-        lastHaloColorRef.current = haloColor;
-        haloPathRef.current.style.fill = haloColor;
-      }
-
-      /* Halo glow — two blur passes (bright core + wide falloff) rendered by
-         the filter; the tick only tunes the WIDE blur radius, overall opacity,
-         and a subtle translate of the whole glow toward the cursor when it is
-         near the resolved key (mouse only; skipped for reduced motion, and
-         touch never fires mousemove). Values are eased so it glides in/out. */
-      let proximity = 0;
-      let shiftX = 0;
-      let shiftY = 0;
-      if (!reducedMotionRef.current && cursor.active && currentProgress >= KEY_RIGID_PROGRESS) {
-        const dxc = cursor.x - svgCenterX;
-        const dyc = cursor.y - svgCenterY;
-        const dist = Math.hypot(dxc, dyc);
-        const range = 300;
-        if (dist < range && dist > 0) {
-          proximity = Math.pow(1 - dist / range, 2);
-          const maxShiftPx = 16;
-          const shiftUser = maxShiftPx / blobScale;
-          shiftX = (dxc / dist) * shiftUser * proximity;
-          shiftY = (dyc / dist) * shiftUser * proximity;
-        }
-      }
-      haloProximityRef.current += (proximity - haloProximityRef.current) * 0.2;
-      const easedProximity = haloProximityRef.current;
-
-      if (glowBlurRef.current) {
-        const wideBlur = 20 + 5 * (1 - detailReveal) + 10 * easedProximity;
-        glowBlurRef.current.setAttribute("stdDeviation", wideBlur.toFixed(2));
-      }
-      if (haloShiftRef.current) {
-        haloShiftRef.current.style.transform =
-          `translate(${shiftX.toFixed(2)}px ${shiftY.toFixed(2)}px)`;
-      }
-      if (haloPathRef.current) {
-        const opacity = 0.1 + 0.05 * (1 - detailReveal) + 0.06 * easedProximity;
-        haloPathRef.current.style.opacity = opacity.toFixed(3);
       }
 
       if (shapeElRefs.current.length) {
@@ -940,33 +772,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       className="w-[var(--blob-size)] h-[var(--blob-size)] pointer-events-none"
     >
       <defs>
-        {/* Halo: two blur passes merged into ONE phase-colored bloom — a
-              tight high-alpha core (bright) + a wide soft falloff, read as a
-              glowing arrival rather than a hard-edged shadow. No second path:
-              the halo path is fed by the physics loop exactly as before. */}
-        <filter id="blob-ambient-halo" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="haloCore" />
-          <feGaussianBlur ref={glowBlurRef} in="SourceGraphic" stdDeviation="20" result="haloWide" />
-          <feComponentTransfer in="haloCore" result="haloCoreBoost">
-            <feFuncA type="linear" slope="1.65" />
-          </feComponentTransfer>
-          <feMerge>
-            <feMergeNode in="haloWide" />
-            <feMergeNode in="haloCoreBoost" />
-          </feMerge>
-        </filter>
-
-        <filter id="logo-glow-filter" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="glowBlur" />
-          <feComponentTransfer in="glowBlur" result="dimmedGlow">
-            <feFuncA type="linear" slope="0.75" />
-          </feComponentTransfer>
-          <feMerge>
-            <feMergeNode in="dimmedGlow" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-
         {/* Grain clip: re-uses the physics-written core silhouette via <use>, so
               the grain + veil always stay in sync with the morph without a
               second path being written by the loop. */}
@@ -1035,11 +840,9 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         </pattern>
         {/* Lighting gradients (all plain gradients — no filters/masks).
               Specular: objectBoundingBox radial fits the rotated ellipse
-              exactly, 8 eased stops -> 0 by the edge. Rims: userSpaceOnUse
-              linear, peak on the lit / shadow corner, fading to 0 by
-              RIM_*_FADE along the light axis. Shadow: objectBoundingBox
-              radial softening #000 outward. Phase alpha lives on the
-              elements' opacity, so these are static. */}
+              exactly, 8 eased stops -> 0 by the edge. Rim: userSpaceOnUse
+              linear, peak on the shadow corner, fading to 0 along the light
+              axis. Phase alpha lives on the elements' opacity. */}
         <radialGradient id="blob-specular-grad">
           {SPEC_STOPS.map((factor, i) => (
             <stop
@@ -1051,64 +854,18 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           ))}
         </radialGradient>
         <linearGradient
-          id="blob-rim-key"
-          gradientUnits="userSpaceOnUse"
-          x1={RIM_KEY_X1}
-          y1={RIM_KEY_Y1}
-          x2={RIM_KEY_X2}
-          y2={RIM_KEY_Y2}
-        >
-          <stop offset="0%" stopColor={RIM_KEY_COLOR} stopOpacity={RIM_KEY_PEAK} />
-          <stop offset={`${RIM_KEY_FADE * 100}%`} stopColor={RIM_KEY_COLOR} stopOpacity="0" />
-          <stop offset="100%" stopColor={RIM_KEY_COLOR} stopOpacity="0" />
-        </linearGradient>
-        <linearGradient
           id="blob-rim-bounce"
           gradientUnits="userSpaceOnUse"
-          x1={RIM_KEY_X2}
-          y1={RIM_KEY_Y2}
-          x2={RIM_KEY_X1}
-          y2={RIM_KEY_Y1}
+          x1={RIM_BOUNCE_X1}
+          y1={RIM_BOUNCE_Y1}
+          x2={RIM_BOUNCE_X2}
+          y2={RIM_BOUNCE_Y2}
         >
           <stop offset="0%" stopColor={RIM_BOUNCE_COLOR} stopOpacity={RIM_BOUNCE_PEAK} />
           <stop offset={`${RIM_BOUNCE_FADE * 100}%`} stopColor={RIM_BOUNCE_COLOR} stopOpacity="0" />
           <stop offset="100%" stopColor={RIM_BOUNCE_COLOR} stopOpacity="0" />
         </linearGradient>
-        <radialGradient id="blob-shadow">
-          {SHADOW_STOPS.map(([offset, factor]) => (
-            <stop
-              key={offset}
-              offset={`${offset * 100}%`}
-              stopColor="#000000"
-              stopOpacity={SHADOW_ALPHA * factor}
-            />
-          ))}
-        </radialGradient>
       </defs>
-
-      {/* Contact shadow: soft black ellipse under the blob, offset away from
-            the light. Sits BEFORE the halo group (behind everything) and
-            outside the clip. Radial-gradient fade — no blur filter. The root
-            svg has overflow: visible so it is not cut by the viewBox. The
-            tick follows the morph and fades it out; the static attrs below are
-            only the first-paint seed. SHADOW_ALPHA = 0 or SHADOW_ALPHA_SCALE
-            = 0 skips it entirely. */}
-      {SHADOW_ALPHA > 0 && SHADOW_ALPHA_SCALE > 0 && (
-        <ellipse
-          ref={shadowRef}
-          cx={SHADOW_CX}
-          cy={SHADOW_CY}
-          rx={SHADOW_RX}
-          ry={SHADOW_RY}
-          fill="url(#blob-shadow)"
-        />
-      )}
-
-      {/* Halo output; wrapped so the whole glow can drift toward the cursor.
-            The path's d/fill are still owned by the physics loop. */}
-      <g ref={haloShiftRef}>
-        <path ref={haloPathRef} id="blob-halo-path" fill={PHASE_COLORS[0]} filter="url(#blob-ambient-halo)" />
-      </g>
 
       {/* Core silhouette: pure black via the wrapper <g> (presentation
             attributes, not per-frame writes). The physics loop only feeds the
@@ -1124,10 +881,9 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             then the fine grain tile, then the directional veil: subtle light
             plays across the surface and is veiled toward the bottom-right,
             but the veil stops short of pure black so grain survives
-            everywhere. Two rim <use> re-draw the same silhouette as static
-            strokes, clipped so only their inner halves show — a key rim on
-            the lit side and a violet bounce on the shadow side, both following
-            the morph for free. All content is static or CSS-animated (pure
+            everywhere. A violet bounce <use> re-draws the silhouette as a
+            static stroke, clipped to its inner half and following the morph
+            for free. All content is static or CSS-animated (pure
             translate); the opacities are phase-linked React props, not
             per-frame writes. */}
       <g ref={meshGroupRef} clipPath="url(#blob-mesh-clip)">
@@ -1174,14 +930,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         <rect width="200" height="200" fill="url(#blob-grain)" opacity={grainOpacity} />
         <rect width="200" height="200" fill="url(#blob-veil)" />
         <use
-          id="blob-rim-key"
-          href="#blob-core-path"
-          fill="none"
-          stroke="url(#blob-rim-key)"
-          strokeWidth={RIM_KEY_STROKE_WIDTH}
-          opacity={rimOpacity}
-        />
-        <use
           id="blob-rim-bounce"
           href="#blob-core-path"
           fill="none"
@@ -1199,7 +947,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           width={keyImageRef.current.width}
           height={keyImageRef.current.height}
           viewBox={detailViewBox}
-          filter="url(#logo-glow-filter)"
           preserveAspectRatio="xMidYMid meet"
           style={{ transformBox: "fill-box", transformOrigin: "center" }}
         >
@@ -1228,7 +975,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             y={keyImageRef.current.y + LOGO_OFFSET_Y}
             width={keyImageRef.current.width}
             height={keyImageRef.current.height}
-            filter="url(#logo-glow-filter)"
             style={{
               opacity: 0,
               transformBox: "fill-box",
