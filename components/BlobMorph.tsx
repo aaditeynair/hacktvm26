@@ -100,11 +100,37 @@ const BASE_RADIUS = 72;
 const KEY_SHRINK_FACTOR = 0.42;
 const TARGET_MAX_RADIUS = 90;
 
+/* --- Detail-logo alignment calibration --------------------------------------
+   At full resolve the blob is the silhouette.svg outline, mapped edge-to-edge
+   into a 400 x 322.06 unit raster box (in `loadKeySilhouette`'s draw frame)
+   centred about CANVAS_CENTER. key.svg is a DIFFERENT asset: its artwork does
+   not fill its 1800 x 1409 canvas (ink bbox ~42.7..1715.5 x 42.3..1393.1), and
+   when it is meet-fitted into the silhouette box its ink covers only ~93% of
+   the blob's outline and rides ~7 units HIGH — so at Phase 4 the black blob
+   peeks past the white key, worst at the bottom. These three constants
+   re-scale + re-centre the key rendering against the CURRENT assets (the blob
+   shape/radii are untouched):
+     KEY_COVER_SCALE — uniform over-cover; 1 == key ink spans the blob box
+        exactly, >1 adds a margin so the blob never crosses the key's edge.
+     KEY_X_SHIFT / KEY_Y_SHIFT — raster-unit shifts applied through `scale`,
+        moving key.svg's ink so its centre lands on CANVAS_CENTER. */
+const KEY_COVER_SCALE = 1.1;
+/* After over-cover is applied, key.svg's ink centre rides +~14.9 raster px
+   RIGHT and ~19.6 raster px ABOVE the silhouette-centre anchor (its ink is
+   asymmetric inside its canvas). The placement formula below subtracts these
+   from centroidX/centroidY so the ink centre lands exactly on CANVAS_CENTER —
+   KEY_X_SHIFT positive slides the box left, KEY_Y_SHIFT negative slides it
+   down. */
+const KEY_X_SHIFT = 14.9;
+const KEY_Y_SHIFT = -19.64;
+
 // Manual fine-tune for detail-logo placement relative to the core polygon.
 // In viewBox units (viewBox is 200 units wide) — not px, so it scales
 // consistently across breakpoints. Nudge and reload to dial in.
+// NOTE: 0/0 — centering is now owned by the KEY_COVER_SCALE/KEY_[XY]_SHIFT
+// calibration above; a non-zero Y here reintroduces a vertical offset.
 const LOGO_OFFSET_X = 0;
-const LOGO_OFFSET_Y = 5;
+const LOGO_OFFSET_Y = 0;
 
 function generateFallbackRadii(n: number): Float32Array {
   const arr = new Float32Array(n);
@@ -297,6 +323,15 @@ function computeDetailReveal(p: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/* Blob visibility: 1 while alive, fading smoothly to 0 over the tail AFTER the
+   key is fully resolved (KEY_RIGID_PROGRESS -> 1), so the black silhouette and
+   its grain/lighting step aside and the resolved key (halo included) stands
+   alone. Progress-driven, not per-frame — reduced-motion safe. */
+function computeBlobVisibility(p: number): number {
+  const t = Math.min(1, Math.max(0, (p - KEY_RIGID_PROGRESS) / (1 - KEY_RIGID_PROGRESS)));
+  return 1 - t * t * (3 - 2 * t);
+}
+
 const PROGRESS_LERP = 0.06;
 
 interface KeyImagePlacement {
@@ -348,6 +383,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const haloShiftRef = useRef<SVGGElement>(null);
   const glowBlurRef = useRef<SVGFEGaussianBlurElement>(null);
   const specularShiftRef = useRef<SVGGElement>(null);
+  const meshGroupRef = useRef<SVGGElement>(null);
   const shadowRef = useRef<SVGEllipseElement>(null);
   /* Shadow smoothing state (plain refs — never cloned into render state).
      `shadowSmoothedRef` holds the lerped position; `shadowWrittenRef` the last
@@ -375,6 +411,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   /* Cached halo color so the fill is only written when it actually changes
      (avoids a per-frame style write to the same element). */
   const lastHaloColorRef = useRef<string | null>(null);
+  const lastBlobOpacityRef = useRef<string | null>(null);
 
   /* Smoothed cursor-proximity to the resolved key (0..1); drives the halo's
      shift + intensity boost. Written from the tick, never the physics math. */
@@ -559,10 +596,10 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
           targetRadiiRef.current = normalizedRadii;
           keyImageRef.current = {
             href: DETAIL_LOGO_SRC,
-            x: CANVAS_CENTER - centroidX * scale,
-            y: CANVAS_CENTER - centroidY * scale,
-            width: drawW * scale,
-            height: drawH * scale,
+            x: CANVAS_CENTER - (centroidX + KEY_X_SHIFT) * scale,
+            y: CANVAS_CENTER - (centroidY + KEY_Y_SHIFT) * scale,
+            width: drawW * scale * KEY_COVER_SCALE,
+            height: drawH * scale * KEY_COVER_SCALE,
           };
           setKeyImageReady(true);
         };
@@ -799,6 +836,19 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
       if (haloPathRef.current) haloPathRef.current.setAttribute("d", dString);
 
       const detailReveal = computeDetailReveal(currentProgress);
+
+      /* Blob steps aside only once the key is FULLY visible. Driven from the
+         SAME smoothed progress as detailReveal (not the latched progress prop,
+         which snaps to 1), so it can never reach 0 while the key is still
+         fading in. Key is fully visible at KEY_RIGID_PROGRESS; the blob then
+         eases out over the tail. Cached to skip redundant writes. */
+      const blobFade = computeBlobVisibility(currentProgress);
+      const blobFadeStr = blobFade.toFixed(3);
+      if (blobFadeStr !== lastBlobOpacityRef.current) {
+        lastBlobOpacityRef.current = blobFadeStr;
+        if (corePathRef.current) corePathRef.current.style.opacity = blobFadeStr;
+        if (meshGroupRef.current) meshGroupRef.current.style.opacity = blobFadeStr;
+      }
 
       /* Phase-linked halo color: same progress value as the morph. Reduced
          motion snaps to the pure phase stop (no in-phase blend). Cached so a
@@ -1080,7 +1130,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
             the morph for free. All content is static or CSS-animated (pure
             translate); the opacities are phase-linked React props, not
             per-frame writes. */}
-      <g clipPath="url(#blob-mesh-clip)">
+      <g ref={meshGroupRef} clipPath="url(#blob-mesh-clip)">
         <rect width="200" height="200" fill="#000000" />
         {MESH_GRAY_CIRCLES.map((c, i) => (
           <circle
