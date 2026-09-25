@@ -90,7 +90,7 @@ function buildSmoothPath(points: { x: number; y: number }[]): string {
 
 // --- assets -----------------------------------------------------------
 const SILHOUETTE_SRC = "/silhouette.svg";
-const DETAIL_LOGO_SRC = "/key.svg";
+const KEY_IMAGE_SRC = "/keycap.png";
 
 const NUM_POINTS = 32;
 const CANVAS_CENTER = 100;
@@ -102,19 +102,19 @@ const TARGET_MAX_RADIUS = 90;
 /* --- Detail-logo alignment calibration --------------------------------------
    At full resolve the blob is the silhouette.svg outline, mapped edge-to-edge
    into a 400 x 322.06 unit raster box (in `loadKeySilhouette`'s draw frame)
-   centred about CANVAS_CENTER. key.svg is a DIFFERENT asset: its artwork does
-   not fill its 1800 x 1409 canvas (ink bbox ~42.7..1715.5 x 42.3..1393.1), and
-   when it is meet-fitted into the silhouette box its ink covers only ~93% of
-   the blob's outline and rides ~7 units HIGH — so at Phase 4 the black blob
+   centred about CANVAS_CENTER. keycap.png is a DIFFERENT asset: its artwork
+   does not fill its 1800 x 1409 canvas (ink bbox ~42.7..1715.5 x 42.3..1393.1),
+   and when it is meet-fitted into the silhouette box its ink covers only ~93%
+   of the blob's outline and rides ~7 units HIGH — so at Phase 4 the black blob
    peeks past the white key, worst at the bottom. These three constants
    re-scale + re-centre the key rendering against the CURRENT assets (the blob
    shape/radii are untouched):
      KEY_COVER_SCALE — uniform over-cover; 1 == key ink spans the blob box
         exactly, >1 adds a margin so the blob never crosses the key's edge.
      KEY_X_SHIFT / KEY_Y_SHIFT — raster-unit shifts applied through `scale`,
-        moving key.svg's ink so its centre lands on CANVAS_CENTER. */
+        moving keycap.png's ink so its centre lands on CANVAS_CENTER. */
 const KEY_COVER_SCALE = 1.1;
-/* After over-cover is applied, key.svg's ink centre rides +~14.9 raster px
+/* After over-cover is applied, keycap.png's ink centre rides +~14.9 raster px
    RIGHT and ~19.6 raster px ABOVE the silhouette-centre anchor (its ink is
    asymmetric inside its canvas). The placement formula below subtracts these
    from centroidX/centroidY so the ink centre lands exactly on CANVAS_CENTER —
@@ -307,35 +307,6 @@ interface KeyImagePlacement {
   height: number;
 }
 
-type DetailShape = { tag: string; props: Record<string, any> };
-
-function parseStyleAttr(styleStr?: string): React.CSSProperties {
-  if (!styleStr) return {};
-  const out: Record<string, string> = {};
-  styleStr.split(";").forEach((decl) => {
-    const [prop, val] = decl.split(":");
-    if (prop && val) out[prop.trim()] = val.trim();
-  });
-  return out as React.CSSProperties;
-}
-function toReactProps(raw: Record<string, string>): Record<string, any> {
-  const { class: cls, style, ...rest } = raw;
-  const out: Record<string, any> = { ...rest, style: parseStyleAttr(style) };
-  if (cls) out.className = cls;
-  return out;
-}
-function extractShapes(svgEl: SVGSVGElement): DetailShape[] {
-  const nodes = Array.from(
-    svgEl.querySelectorAll("path, circle, ellipse, rect, polygon, polyline")
-  );
-  return nodes.map((el) => ({
-    tag: el.tagName.toLowerCase(),
-    props: toReactProps(
-      Object.fromEntries(Array.from(el.attributes).map((a) => [a.name, a.value]))
-    ),
-  }));
-}
-
 interface BlobMorphProps {
   progress?: number;
 }
@@ -346,12 +317,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
   const corePathRef = useRef<SVGPathElement>(null);
   const specularShiftRef = useRef<SVGGElement>(null);
   const meshGroupRef = useRef<SVGGElement>(null);
-  const logoImageRef = useRef<SVGImageElement>(null); // fallback, kept for graceful degradation
-
-  const [detailShapes, setDetailShapes] = useState<DetailShape[] | null>(null);
-  const [detailDefsMarkup, setDetailDefsMarkup] = useState<string | null>(null);
-  const [detailViewBox, setDetailViewBox] = useState<string | null>(null);
-  const shapeElRefs = useRef<(SVGGraphicsElement | null)[]>([]);
+  const logoImageRef = useRef<SVGImageElement>(null);
 
   const targetRadiiRef = useRef<Float32Array>(generateFallbackRadii(NUM_POINTS));
   const keyImageRef = useRef<KeyImagePlacement | null>(null);
@@ -539,7 +505,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
 
           targetRadiiRef.current = normalizedRadii;
           keyImageRef.current = {
-            href: DETAIL_LOGO_SRC,
+            href: KEY_IMAGE_SRC,
             x: CANVAS_CENTER - (centroidX + KEY_X_SHIFT) * scale,
             y: CANVAS_CENTER - (centroidY + KEY_Y_SHIFT) * scale,
             width: drawW * scale * KEY_COVER_SCALE,
@@ -558,28 +524,6 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadDetailShapes() {
-      try {
-        const res = await fetch(DETAIL_LOGO_SRC);
-        const svgText = await res.text();
-        const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-        const svgEl = doc.querySelector("svg");
-        if (!svgEl || cancelled) return;
-
-        const defsEl = svgEl.querySelector("defs");
-        setDetailViewBox(svgEl.getAttribute("viewBox"));
-        setDetailDefsMarkup(defsEl ? defsEl.outerHTML : null);
-        setDetailShapes(extractShapes(svgEl));
-      } catch (err) {
-        console.warn("BlobMorph: could not parse detail shapes, falling back to flat image", err);
-      }
-    }
-    loadDetailShapes();
-    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -728,16 +672,7 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         if (meshGroupRef.current) meshGroupRef.current.style.opacity = blobFadeStr;
       }
 
-      if (shapeElRefs.current.length) {
-        const n = shapeElRefs.current.length;
-        const REVEAL_BAND = 0.25;
-        shapeElRefs.current.forEach((el, i) => {
-          if (!el) return;
-          const t = n <= 1 ? 0 : i / (n - 1);
-          const raw = (detailReveal * (1 + REVEAL_BAND) - t) / REVEAL_BAND;
-          el.style.opacity = String(Math.min(1, Math.max(0, raw)));
-        });
-      } else if (logoImageRef.current) {
+      if (logoImageRef.current) {
         logoImageRef.current.style.opacity = String(detailReveal);
       }
 
@@ -939,50 +874,22 @@ export function BlobMorph({ progress = 0 }: BlobMorphProps) {
         />
       </g>
 
-      {keyImageReady && keyImageRef.current && detailShapes && detailViewBox ? (
-        <svg
+      {keyImageReady && keyImageRef.current && (
+        <image
           id={KEY_VISUAL_ID}
+          ref={logoImageRef}
+          href={keyImageRef.current.href}
           x={keyImageRef.current.x + LOGO_OFFSET_X}
           y={keyImageRef.current.y + LOGO_OFFSET_Y}
           width={keyImageRef.current.width}
           height={keyImageRef.current.height}
-          viewBox={detailViewBox}
+          style={{
+            opacity: 0,
+            transformBox: "fill-box",
+            transformOrigin: "center",
+          }}
           preserveAspectRatio="xMidYMid meet"
-          style={{ transformBox: "fill-box", transformOrigin: "center" }}
-        >
-          {detailDefsMarkup && (
-            <g dangerouslySetInnerHTML={{ __html: detailDefsMarkup }} />
-          )}
-          {detailShapes.map((shape, i) => {
-            const Tag = shape.tag as any;
-            return (
-              <Tag
-                key={i}
-                {...shape.props}
-                ref={(el: SVGGraphicsElement | null) => { shapeElRefs.current[i] = el; }}
-                style={{ ...shape.props.style, opacity: 0 }}
-              />
-            );
-          })}
-        </svg>
-      ) : (
-        keyImageReady && keyImageRef.current && (
-          <image
-            id={KEY_VISUAL_ID}
-            ref={logoImageRef}
-            href={keyImageRef.current.href}
-            x={keyImageRef.current.x + LOGO_OFFSET_X}
-            y={keyImageRef.current.y + LOGO_OFFSET_Y}
-            width={keyImageRef.current.width}
-            height={keyImageRef.current.height}
-            style={{
-              opacity: 0,
-              transformBox: "fill-box",
-              transformOrigin: "center",
-            }}
-            preserveAspectRatio="xMidYMid meet"
-          />
-        )
+        />
       )}
     </svg>
   );

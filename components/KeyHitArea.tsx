@@ -30,7 +30,7 @@ export const KEY_HIT_AREA_ID = "key-hit-area";
  *   max radius 159.0 → scale = (90 × 0.42) / 159.0 = 0.2378.
  *
  *   resolved silhouette polygon bbox (200-viewBox): (82.4, 62.3) → (117.6, 137.7)
- *   detail key.svg placement                (200-viewBox): (57.3, 57.9) → (152.4, 134.5)
+ *   detail keycap.png placement               (200-viewBox): (57.3, 57.9) → (152.4, 134.5)
  *
  *   union + 3% margin per side:  (51.3, 51.9) → (158.4, 143.7)
  *   → size (53.56% × 45.90%), center (52.43%, 48.92%) of the SVG box.
